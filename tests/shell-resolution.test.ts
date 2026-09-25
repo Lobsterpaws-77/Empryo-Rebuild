@@ -149,6 +149,18 @@ describe("describeShellSpawnError", () => {
     },
   );
 
+  test.if(!IS_WIN)("blames a missing working directory, not a valid shell", async () => {
+    const shellPath = resolvePosixShell();
+    const err = await new Promise<NodeJS.ErrnoException>((resolve) => {
+      const proc = spawnShell("echo hi", { cwd: "/definitely/not/a/real/dir-xyzzy" });
+      proc.on("error", (e) => resolve(e as NodeJS.ErrnoException));
+    });
+    expect(err.code).toBe("ENOENT");
+    const msg = describeShellSpawnError(err, shellPath);
+    expect(msg).toContain("working directory");
+    expect(msg).not.toContain("SOULFORGE_SHELL");
+  });
+
   test("passes non-ENOENT errors through unchanged", () => {
     const err = Object.assign(new Error("some other failure"), { code: "EACCES" });
     expect(describeShellSpawnError(err, "/bin/sh")).toBe("some other failure");

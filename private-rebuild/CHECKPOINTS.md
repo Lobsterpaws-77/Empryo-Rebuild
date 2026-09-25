@@ -9,7 +9,12 @@ The 14 `structural_edit` failures exist at baseline and are excluded as pre-exis
 
 The audit is in `CP0_BASELINE_AUDIT.md`.
 
-## CP1 — routing correctness: lane model + effort resolved together
+## CP1 — routing correctness: lane model + effort resolved together — `d32c15d` + `09e541c`
+
+> History note: `d32c15d` ("test") is part of CP1. A worker process committed
+> once from the main checkout by mistake and swept up CP1's staged deletion of
+> `src/core/llm/task-router.ts`. CP1 is the two commits together. The history
+> was deliberately left as is (no force-push).
 
 **Classification:** SHARED CORE.
 
@@ -99,3 +104,49 @@ accidental mix of old and new routing.
   `createAgent`.
 - typecheck, lint: pass.
 - full suite: 3109 pass / 14 fail (baseline only).
+
+## CP2 — orchestration shell correctness — `2ab3b33` + follow-up
+
+**Classification:** bare-`sh` spawn defect is SHARED CORE. The desktop graph
+shell node is BLOCKED BY MISSING SOURCE.
+
+### Defect
+
+`shellInvocation()`, `spawnShell()` and `bunShellArgs()`
+(`src/core/platform/index.ts`) spawned the bare name `sh`, which is resolved
+through PATH. When an app is launched from the macOS Dock or Finder, PATH can
+be minimal, and callers may also pass a stripped `env.PATH`. Either way the
+spawn fails with `posix_spawn 'sh' ENOENT`, even though `/bin/sh` exists. That
+is the same signature as the desktop graph-shell failure.
+
+### Fix
+
+- `resolvePosixShell()` resolves the shell in this order and caches the result:
+  1. `SOULFORGE_SHELL` (used only if it is an absolute path to an executable)
+  2. `/bin/sh`
+  3. `/usr/bin/sh`
+  4. PATH lookup
+  5. the literal `sh`
+
+  All three spawn helpers use it on POSIX. Windows is unchanged.
+- `describeShellSpawnError()` gives an attributed message for shell ENOENT,
+  used by the `shell` and `project` tools. Follow-up: when the shell exists,
+  ENOENT is attributed to a missing working directory (Node reports a missing
+  cwd as `spawn <shell> ENOENT`).
+- The hook runner (`hooks/runner.ts`), auto-format and the setup guide pick
+  up the fix through the shared helpers.
+
+### Validation
+
+- `tests/shell-resolution.test.ts` (13 tests): stripped-PATH spawns through
+  `spawnShell` and `Bun.spawn(bunShellArgs())`, override handling, and error
+  attribution.
+- `tests/platform-windows.test.ts`: the one assertion that hard-coded `"sh"`
+  was updated.
+- typecheck and lint pass.
+
+**LOCAL ACCEPTANCE REQUIRED:** macOS GUI-launch proof, and any desktop graph
+shell node, whose executor is not in this source.
+
+Implementation note: the first commit was produced by a bounded Sonnet worker
+in an isolated worktree. I reviewed and integrated it; the follow-up is mine.

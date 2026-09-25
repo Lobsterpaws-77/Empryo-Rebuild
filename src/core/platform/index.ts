@@ -122,6 +122,14 @@ export function resolvePosixShell(): string {
 export function describeShellSpawnError(err: unknown, shellPath: string): string {
   const message = err instanceof Error ? err.message : String(err);
   const code = (err as NodeJS.ErrnoException | undefined)?.code;
+  if (code === "ENOENT" && isAbsolute(shellPath) && isExecutableFile(shellPath)) {
+    // Node reports a missing cwd as "spawn <shell> ENOENT" too — the shell is
+    // fine, so don't blame it.
+    return (
+      `Command could not start: the shell "${shellPath}" exists, so the ENOENT most likely ` +
+      `means the working directory does not exist.\nOriginal error: ${message}`
+    );
+  }
   if (code === "ENOENT") {
     return (
       `Could not launch the shell at "${shellPath}" (ENOENT — not found or not executable). ` +
