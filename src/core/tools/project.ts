@@ -2,7 +2,7 @@ import { access, readdir, readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { ToolResult } from "../../types/index.js";
 import { getCwd } from "../cwd.js";
-import { bunShellArgs } from "../platform/index.js";
+import { bunShellArgs, describeShellSpawnError, shellInvocation } from "../platform/index.js";
 import { compressShellOutputFull } from "./shell-compress.js";
 import { saveTee, truncateWithTee } from "./tee.js";
 import { getToolTimeoutMs } from "./tool-timeout.js";
@@ -1039,7 +1039,7 @@ export const projectTool = {
         error: `exit ${String(exitCode)}`,
       };
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
+      const msg = describeShellSpawnError(err, shellInvocation().cmd);
       return { success: false, output: msg, error: msg };
     }
   },

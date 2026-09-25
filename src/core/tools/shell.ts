@@ -1,6 +1,11 @@
 import stripAnsi from "strip-ansi";
 import type { ToolResult } from "../../types";
-import { killTree, spawnShell } from "../platform/index.js";
+import {
+  describeShellSpawnError,
+  killTree,
+  shellInvocation,
+  spawnShell,
+} from "../platform/index.js";
 import { isForbidden } from "../security/forbidden.js";
 // TODO(beta): inline image rendering — disabled until suspend/resume bridge is stable
 // import { canRenderImages, renderImages } from "../terminal/image.js";
@@ -472,7 +477,8 @@ export const shellTool = {
         settled = true;
         clearTimeout(hardKillTimer);
         cleanupAbortListener?.();
-        resolve({ success: false, output: err.message, error: err.message });
+        const msg = describeShellSpawnError(err, shellInvocation().cmd);
+        resolve({ success: false, output: msg, error: msg });
       });
     });
   },

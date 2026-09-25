@@ -90,7 +90,10 @@ describe("platform shim: shell", () => {
       expect(cmd.toLowerCase()).toContain("cmd");
       expect(flag).toContain("/c");
     } else {
-      expect(cmd).toBe("sh");
+      // Resolved to an absolute path (see resolvePosixShell) rather than a
+      // bare "sh" that depends on PATH being set.
+      expect(cmd.startsWith("/")).toBe(true);
+      expect(cmd.endsWith("sh")).toBe(true);
       expect(flag).toBe("-c");
     }
   });

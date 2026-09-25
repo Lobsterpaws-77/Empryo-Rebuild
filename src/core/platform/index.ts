@@ -6,9 +6,9 @@
  */
 
 import { type SpawnOptions, spawn, spawnSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { accessSync, existsSync, constants as fsConstants, statSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { delimiter, join } from "node:path";
+import { delimiter, isAbsolute, join } from "node:path";
 
 declare const __SOULFORGE_COMPILED__: boolean | undefined;
 
@@ -47,6 +47,92 @@ export function masonBinDir(): string {
 
 // ── Shell execution ──────────────────────────────────────────────
 
+function isExecutableFile(p: string): boolean {
+  try {
+    if (!statSync(p).isFile()) return false;
+    accessSync(p, fsConstants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+let _cachedPosixShell: string | null = null;
+
+/**
+ * Test-only: clear the cached result of {@link resolvePosixShell} so a test
+ * can change `SOULFORGE_SHELL` or the filesystem and re-resolve.
+ */
+export function _resetPosixShellCache(): void {
+  _cachedPosixShell = null;
+}
+
+/**
+ * Resolve an absolute path to a POSIX shell suitable for `sh -c <command>`.
+ *
+ * GUI-launched apps on macOS (Dock/Finder) can inherit a minimal or empty
+ * PATH, so a bare `"sh"` argv0 can fail to resolve (`posix_spawn 'sh'
+ * ENOENT`) even though /bin/sh exists. Resolution order:
+ *   1. `SOULFORGE_SHELL` env override — only if it is an absolute path to an
+ *      existing, executable file.
+ *   2. `/bin/sh` if it exists and is executable.
+ *   3. `/usr/bin/sh` if it exists and is executable.
+ *   4. Search PATH for `sh` (via {@link findOnPath}).
+ *   5. Fall back to the literal `"sh"` (unresolved — the OS will try PATH
+ *      itself and fail with a clear ENOENT if nothing is found).
+ *
+ * The result is cached for the process lifetime; see
+ * {@link _resetPosixShellCache} for tests.
+ */
+export function resolvePosixShell(): string {
+  if (_cachedPosixShell) return _cachedPosixShell;
+
+  const override = process.env.SOULFORGE_SHELL;
+  if (override && isAbsolute(override) && isExecutableFile(override)) {
+    _cachedPosixShell = override;
+    return _cachedPosixShell;
+  }
+
+  if (isExecutableFile("/bin/sh")) {
+    _cachedPosixShell = "/bin/sh";
+    return _cachedPosixShell;
+  }
+
+  if (isExecutableFile("/usr/bin/sh")) {
+    _cachedPosixShell = "/usr/bin/sh";
+    return _cachedPosixShell;
+  }
+
+  const onPath = findOnPath("sh");
+  if (onPath) {
+    _cachedPosixShell = onPath;
+    return _cachedPosixShell;
+  }
+
+  _cachedPosixShell = "sh";
+  return _cachedPosixShell;
+}
+
+/**
+ * Turn a shell-spawn ENOENT into a clear, attributed error message instead of
+ * a raw `posix_spawn 'sh' ENOENT` that reads like an agent/provider failure.
+ * Errors unrelated to the shell binary itself pass through with their
+ * original message.
+ */
+export function describeShellSpawnError(err: unknown, shellPath: string): string {
+  const message = err instanceof Error ? err.message : String(err);
+  const code = (err as NodeJS.ErrnoException | undefined)?.code;
+  if (code === "ENOENT") {
+    return (
+      `Could not launch the shell at "${shellPath}" (ENOENT — not found or not executable). ` +
+      "This usually happens when the app was launched with a minimal PATH (e.g. from the macOS " +
+      "Dock/Finder) and no shell could be resolved. Set SOULFORGE_SHELL to an absolute path to a " +
+      `working shell to override, or verify a shell is installed.\nOriginal error: ${message}`
+    );
+  }
+  return message;
+}
+
 /** Args for spawning a shell that runs an arbitrary command string. */
 export function shellInvocation(): { cmd: string; flag: string } {
   if (IS_WIN) {
@@ -55,7 +141,7 @@ export function shellInvocation(): { cmd: string; flag: string } {
     // /c  — run command then exit
     return { cmd: process.env.COMSPEC ?? "cmd.exe", flag: "/d /s /c" };
   }
-  return { cmd: "sh", flag: "-c" };
+  return { cmd: resolvePosixShell(), flag: "-c" };
 }
 
 export function spawnShell(commandLine: string, options?: SpawnOptions): ReturnType<typeof spawn> {
@@ -64,7 +150,7 @@ export function spawnShell(commandLine: string, options?: SpawnOptions): ReturnT
     const cmd = process.env.COMSPEC ?? "cmd.exe";
     return spawn(cmd, ["/d", "/s", "/c", commandLine], { ...opts, windowsHide: true });
   }
-  return spawn("sh", ["-c", commandLine], opts);
+  return spawn(resolvePosixShell(), ["-c", commandLine], opts);
 }
 
 // ── Process management ──────────────────────────────────────────
@@ -184,7 +270,7 @@ export function bunShellArgs(commandLine: string): string[] {
   if (IS_WIN) {
     return [process.env.COMSPEC ?? "cmd.exe", "/d", "/s", "/c", commandLine];
   }
-  return ["sh", "-c", commandLine];
+  return [resolvePosixShell(), "-c", commandLine];
 }
 
 export function findOnPath(bin: string): string | null {
