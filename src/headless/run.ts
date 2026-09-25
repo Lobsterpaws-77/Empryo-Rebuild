@@ -8,6 +8,7 @@ import { ContextManager } from "../core/context/manager.js";
 import { getCwd } from "../core/cwd.js";
 import { resolveModel } from "../core/llm/provider.js";
 import { buildProviderOptions } from "../core/llm/provider-options.js";
+import { buildSubagentRouting } from "../core/llm/subagent-routing.js";
 import { disposeMCPManager } from "../core/mcp/index.js";
 import { SessionManager } from "../core/sessions/manager.js";
 import { onFileEdited } from "../core/tools/file-events.js";
@@ -163,36 +164,16 @@ async function setupAgent(
     await getMCPManager().connectAll(merged.mcpServers);
   }
 
-  // Resolve subagent + web-search models from the task router (parity with TUI).
-  const tr = merged.taskRouter;
-  const sparkModelId = tr?.spark ?? tr?.exploration ?? tr?.trivial ?? undefined;
-  const emberModelId = tr?.ember ?? tr?.coding ?? undefined;
-  const webSearchModelId = tr?.webSearch ?? undefined;
-  const desloppifyModelId = tr?.desloppify ?? undefined;
-  const verifyModelId = tr?.verify ?? undefined;
-  const tryResolve = (id: string | undefined): LanguageModel | undefined => {
-    if (!id) return undefined;
-    try {
-      return resolveModel(id);
-    } catch (err) {
-      logBackgroundError(
-        "headless:router-resolve",
-        `model "${id}" failed to resolve: ${err instanceof Error ? err.message : String(err)}`,
-      );
-      return undefined;
-    }
-  };
-  const subagentModels =
-    sparkModelId || emberModelId || desloppifyModelId || verifyModelId
-      ? {
-          spark: tryResolve(sparkModelId),
-          ember: tryResolve(emberModelId),
-          desloppify: tryResolve(desloppifyModelId),
-          verify: tryResolve(verifyModelId),
-        }
-      : undefined;
+  // Resolve worker-lane models from the task router — same core resolver as the TUI.
   const webSearchEnabled = merged.webSearch !== false;
-  const webSearchModel = webSearchEnabled ? tryResolve(webSearchModelId) : undefined;
+  const routing = buildSubagentRouting(merged, modelId, resolveModel, (lane, id, err) => {
+    logBackgroundError(
+      "headless:router-resolve",
+      `${lane} model "${id}" failed to resolve: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  });
+  const subagentModels = routing.subagentModels;
+  const webSearchModel = webSearchEnabled ? routing.webSearchModel : undefined;
 
   // Shared file cache so dispatch subagents and multi-turn chat see edits made
   // earlier in the session (parity with useChat's sharedCacheRef).
@@ -251,6 +232,7 @@ async function setupAgent(
     disablePruning: !["subagents", "both"].includes(
       merged.contextManagement?.pruningTarget ?? "none",
     ),
+    routingConfig: merged,
   });
 
   return {

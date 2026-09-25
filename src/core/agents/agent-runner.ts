@@ -23,7 +23,12 @@ import {
 import { codeBase } from "./code.js";
 import { exploreBase } from "./explore.js";
 import { emitMultiAgentEvent } from "./subagent-events.js";
-import { buildStepCallbacks, createAgent, type SubagentModels } from "./subagent-tools.js";
+import {
+  buildStepCallbacks,
+  createAgent,
+  resolveTaskRoute,
+  type SubagentModels,
+} from "./subagent-tools.js";
 
 const MAX_NO_EDIT_RETRIES = 1;
 
@@ -173,30 +178,59 @@ export function classifyTask(task: AgentTask, models?: SubagentModels): TaskTier
   // Code agents are always embers — they need their own coding model and tools
   if (task.role === "code") return "ember";
 
-  // Explore — spark only if the explore model matches the parent (cache sharing).
+  // Read-only — spark only if the lane's model matches the parent (cache sharing).
   // Different model = different cache namespace = no benefit from spark overhead.
-  if (models?.sparkModel) {
-    const sparkId = getModelId(models.sparkModel);
-    const parentId = getModelId(models.defaultModel);
-    if (sparkId !== parentId) return "ember";
+  // Tier is a prompt-cache concept only; it never decides model or effort.
+  if (models) {
+    const { model } = selectModel(task, models);
+    if (getModelId(model) !== getModelId(models.defaultModel)) return "ember";
   }
 
   return "spark";
 }
 
+/**
+ * Routing lane for a task. The lane — not the cache tier — decides both the
+ * model and the reasoning effort (see core/llm/lane-routing.ts).
+ *  - explicit `task.lane` wins (verifier → verify, de-sloppify → desloppify)
+ *  - agents that run read-only (explore/investigate, or any task in a
+ *    read-only dispatch) → spark
+ *  - code → ember
+ */
+export function resolveTaskLane(
+  task: AgentTask,
+  models?: Pick<SubagentModels, "readOnly">,
+): string {
+  if (task.lane) return task.lane;
+  if (task.role === "explore" || task.role === "investigate" || models?.readOnly === true) {
+    return "spark";
+  }
+  return "ember";
+}
+
+/** The LanguageModel configured for a lane, falling back to the parent model. */
+export function laneModel(lane: string, models: SubagentModels): LanguageModel {
+  switch (lane) {
+    case "spark":
+      return models.sparkModel ?? models.defaultModel;
+    case "ember":
+      return models.emberModel ?? models.defaultModel;
+    case "verify":
+      return models.verifyModel ?? models.defaultModel;
+    case "desloppify":
+      return models.desloppifyModel ?? models.defaultModel;
+    case "webSearch":
+      return models.webSearchModel ?? models.defaultModel;
+    default:
+      return models.laneModels?.[lane] ?? models.defaultModel;
+  }
+}
+
 export function selectModel(task: AgentTask, models: SubagentModels): { model: LanguageModel } {
-  const tier = classifyTask(task, models);
-
-  // Spark: same model as parent for cache sharing
-  if (tier === "spark") {
-    return { model: models.sparkModel ?? models.defaultModel };
+  if (task.model && models.modelFactory) {
+    return { model: models.modelFactory(task.model) };
   }
-
-  // Ember: explore uses sparkModel (cheaper), code uses emberModel
-  if (task.role !== "code" && models.sparkModel) {
-    return { model: models.sparkModel };
-  }
-  return { model: models.emberModel ?? models.defaultModel };
+  return { model: laneModel(resolveTaskLane(task, models), models) };
 }
 
 export function stripContextManagement(opts?: ProviderOptions): ProviderOptions | undefined {
@@ -271,6 +305,13 @@ export async function runAgentTask(
     typeof selectedModel === "object" && "modelId" in selectedModel
       ? String(selectedModel.modelId)
       : "unknown";
+  const route = resolveTaskRoute(task, models, models.routingConfig ?? loadConfig());
+  const routeFields = {
+    lane: route.lane,
+    effort: route.effort,
+    modelSource: route.modelSource,
+    effortSource: route.effortSource,
+  };
   emitMultiAgentEvent({
     parentToolCallId,
     type: "agent-start",
@@ -280,6 +321,7 @@ export async function runAgentTask(
     totalAgents,
     modelId: selectedModelId,
     tier: taskTier,
+    ...routeFields,
   });
   if (task.taskId != null) {
     taskListTool.execute({
@@ -689,6 +731,7 @@ export async function runAgentTask(
         resultChars: resultText.length,
         modelId: selectedModelId,
         tier: taskTier,
+        ...routeFields,
         succeeded,
         warning: editVerificationWarning,
       });
@@ -722,6 +765,7 @@ export async function runAgentTask(
         input,
         output,
         cacheRead,
+        ...routeFields,
       });
 
       return { doneResult, resultText, callbacks, result: agentResult };
@@ -808,6 +852,7 @@ export async function runAgentTask(
     tabId: task.tabId,
     agentId: task.agentId,
     errorMessage: errMsg.slice(0, 500),
+    ...routeFields,
   });
 
   return {

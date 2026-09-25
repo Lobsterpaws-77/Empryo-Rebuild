@@ -20,6 +20,13 @@ export interface TaskRouter {
   default: string | null;
   /** Max concurrent dispatch agents. Default: 3. Range: 2–8. */
   maxConcurrentAgents?: number;
+  /**
+   * Per-lane reasoning effort, keyed by lane id (spark, ember, verify,
+   * desloppify, webSearch, compact, or a registered extension lane).
+   * Unset/null = the lane's documented fallback (see core/llm/lane-routing.ts).
+   * Resolved together with the lane model from the same scope.
+   */
+  effort?: Partial<Record<string, EffortLevel | "off" | null>>;
   /** @config-compat Legacy fields — mapped to spark/ember on load. Hidden from /router UI. */
   coding?: string | null;
   exploration?: string | null;

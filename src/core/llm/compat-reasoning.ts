@@ -32,6 +32,12 @@ const COMPAT_PROVIDERS = new Set([
   "llmgateway",
 ]);
 
+/** True when reasoning for `modelId` is body-injected at model construction
+ *  (OpenAI-compatible providers) rather than sent as per-request providerOptions. */
+export function isCompatReasoningProvider(modelId: string): boolean {
+  return COMPAT_PROVIDERS.has(parseProvider(modelId).provider);
+}
+
 export function getCompatReasoningBody(
   modelId: string,
   config: AppConfig,

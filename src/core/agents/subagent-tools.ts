@@ -4,9 +4,11 @@ import { tool } from "ai";
 import { z } from "zod";
 import { loadConfig } from "../../config/index.js";
 import { logBackgroundError } from "../../stores/errors.js";
-import type { AgentFeatures } from "../../types/index.js";
+import type { AgentFeatures, AppConfig } from "../../types/index.js";
 import { getWorkspaceCoordinator } from "../coordination/WorkspaceCoordinator.js";
 import { getCwd } from "../cwd.js";
+import { applyLaneEffort, type LaneRoute, resolveLaneRoute } from "../llm/lane-routing.js";
+import { getModelId } from "../llm/model-id.js";
 import { getModelContextWindow } from "../llm/models.js";
 import { buildProviderOptions, supportsProgrammaticToolCalling } from "../llm/provider-options.js";
 import { wrapWithBusCache } from "../tools/bus-cache.js";
@@ -19,6 +21,7 @@ import {
   classifyTask,
   getAgentWaitMs,
   getMaxConcurrentAgents,
+  resolveTaskLane,
   runAgentTask,
   selectModel,
   sleep,
@@ -61,6 +64,18 @@ export interface SubagentModels {
   forgeTools?: Record<string, unknown>;
   /** Mutable ref to the parent forge's conversation messages — used for doppelganger mode. */
   parentMessagesRef?: { current: import("@ai-sdk/provider-utils").ModelMessage[] | null };
+  /**
+   * Effective (global + project) config snapshot taken when the Forge turn
+   * started. Every worker in the turn resolves lane model + effort from this
+   * one snapshot — the same one the UI reports. Falls back to loadConfig().
+   */
+  routingConfig?: AppConfig;
+  /** Full "provider/model" id of the parent Forge model (for "parent" lane fallback). */
+  parentModelId?: string;
+  /** Models for extension lanes registered via registerRoutingLane(). */
+  laneModels?: Record<string, LanguageModel>;
+  /** Builds a LanguageModel for a per-dispatch model override. */
+  modelFactory?: (modelId: string) => LanguageModel;
 }
 
 // Tools that explore/investigate sparks must not execute.
@@ -230,7 +245,7 @@ export async function createAgent(
   bus: AgentBus,
   parentToolCallId?: string,
   // biome-ignore lint/suspicious/noExplicitAny: explore/code agents have different tool generics
-): Promise<{ agent: any; modelId: string; tier: string }> {
+): Promise<{ agent: any; modelId: string; tier: string; route: LaneRoute }> {
   const useExplore =
     task.role === "explore" || task.role === "investigate" || models.readOnly === true;
   const { model } = selectModel(task, models);
@@ -242,22 +257,25 @@ export async function createAgent(
   // Ember: different model or code role → lean tools, lean prompt, no cache sharing overhead.
   const useSpark = models.forgeInstructions != null && tier === "spark";
 
+  // Resolve the lane's effort from the SAME effective snapshot that picked the
+  // model — never from generic role/tier classification or another lane.
+  const routingConfig = models.routingConfig ?? loadConfig();
+  const route = resolveTaskRoute(task, models, routingConfig);
+
   // Rebuild provider options from scratch for the subagent's model — same path
   // the main forge uses (buildProviderOptions). This guarantees per-model
   // capability gating (no effort on Haiku, no thinking on GPT, etc.) instead of
   // ad-hoc patching the parent's options.
-  const subagentConfig = loadConfig();
-  const explorePerfOverride =
-    useExplore && subagentConfig.performance?.effort && subagentConfig.performance.effort !== "off"
-      ? {
-          ...subagentConfig,
-          performance: { ...subagentConfig.performance, effort: "low" as const },
-        }
-      : subagentConfig;
-  const built = await buildProviderOptions(modelId, explorePerfOverride);
+  // LanguageModel.modelId is provider-local ("claude-sonnet-4-6"). Provider
+  // capability gating needs the full "provider/model" id — with the bare id
+  // buildProviderOptions returns {} and every reasoning option (effort
+  // included) was silently dropped for workers. Use the route's full id when
+  // it names the model actually selected.
+  const providerModelId = routeMatchesModel(route, modelId) ? (route.modelId as string) : modelId;
+  const built = await buildProviderOptions(providerModelId, applyLaneEffort(routingConfig, route));
   const subagentProviderOptions = stripContextManagement(built.providerOptions);
 
-  const contextWindow = await getModelContextWindow(modelId);
+  const contextWindow = await getModelContextWindow(providerModelId);
   const forgeInstructions = useSpark ? models.forgeInstructions : undefined;
 
   // Spark mode: use forge's tool definitions (guarded by role) for cache prefix hits.
@@ -342,7 +360,34 @@ export async function createAgent(
     });
   }
 
-  return { agent, modelId, tier };
+  return { agent, modelId, tier, route };
+}
+
+/** True when the route's full id refers to the provider-local `modelId`. */
+export function routeMatchesModel(route: LaneRoute, modelId: string): boolean {
+  const full = route.modelId;
+  if (!full) return false;
+  return full === modelId || full.endsWith(`/${modelId}`);
+}
+
+/**
+ * Resolve lane model + effort for a task. The model id reported is the full
+ * "provider/model" id when the lane resolves from config; the LanguageModel
+ * actually used was built from that same id by the caller (useChat/headless).
+ */
+export function resolveTaskRoute(
+  task: AgentTask,
+  models: SubagentModels,
+  routingConfig: AppConfig,
+): LaneRoute {
+  const lane = resolveTaskLane(task, models);
+  const parentModelId = models.parentModelId ?? getModelId(models.defaultModel);
+  return resolveLaneRoute(lane, routingConfig, {
+    parentModelId,
+    // A model override is only honoured when a factory can build it, so the
+    // reported route always matches the model actually used.
+    override: { model: models.modelFactory ? task.model : undefined, effort: task.effort },
+  });
 }
 
 const SKILL_TOKEN_RE = /[a-z0-9]+/gi;

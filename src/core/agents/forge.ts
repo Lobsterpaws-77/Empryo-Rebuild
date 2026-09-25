@@ -7,6 +7,7 @@ import { loadConfig } from "../../config/index.js";
 import { logBackgroundError } from "../../stores/errors.js";
 import type {
   AgentFeatures,
+  AppConfig,
   EditorIntegration,
   ForgeMode,
   ImageAttachment,
@@ -685,6 +686,11 @@ interface ForgeAgentOptions {
   disabledTools?: Set<string>;
   tabId?: string;
   tabLabel?: string;
+  /**
+   * Effective config snapshot for this turn. Worker lanes resolve model AND
+   * effort from it (see core/llm/lane-routing.ts). Falls back to loadConfig().
+   */
+  routingConfig?: AppConfig;
 }
 
 /** Creates the main Forge ToolLoopAgent — model can change between turns (Ctrl+L). */
@@ -716,6 +722,7 @@ export function createForgeAgent({
   disabledTools,
   tabId,
   tabLabel,
+  routingConfig,
 }: ForgeAgentOptions) {
   const isRestricted = RESTRICTED_MODES.has(forgeMode);
   const repoMap = contextManager.isRepoMapReady() ? contextManager.getRepoMap() : undefined;
@@ -871,6 +878,8 @@ export function createForgeAgent({
           defaultModel: model,
           sparkModel: subagentModels?.spark,
           webSearchModel,
+          routingConfig,
+          parentModelId: fullModelId,
           providerOptions,
           headers: subagentHeaders,
           onApproveWebSearch: effectiveApproveWebSearch,
@@ -894,6 +903,8 @@ export function createForgeAgent({
         desloppifyModel: subagentModels?.desloppify,
         verifyModel: subagentModels?.verify,
         webSearchModel,
+        routingConfig,
+        parentModelId: fullModelId,
         providerOptions,
         headers: subagentHeaders,
         onApproveWebSearch: effectiveApproveWebSearch,

@@ -64,6 +64,9 @@ export async function runDesloppify(
     agentId: "desloppify",
     role: "code",
     tier: "ember",
+    // Model AND effort come from the desloppify lane — not from generic
+    // code/ember routing (which would inherit the coder's effort).
+    lane: "desloppify",
     task: `${DESLOPPIFY_PROMPT}${lintResult}\n\nFiles to review:\n${editedPaths.map((p) => `- ${p}`).join("\n")}`,
     targetFiles: editedPaths,
   };
@@ -72,7 +75,7 @@ export async function runDesloppify(
   try {
     const { resultText } = await runAgentTask(
       desloppifyTask,
-      { ...models, emberModel: models.desloppifyModel, parentMessagesRef: undefined },
+      { ...models, parentMessagesRef: undefined },
       bus,
       parentToolCallId,
       tasks.length + 1,
@@ -173,10 +176,13 @@ export async function runVerifier(
     taskContext,
   ].join("\n");
 
-  const reviewModel = models.verifyModel ?? models.defaultModel;
   const verifyTask: AgentTask = {
     agentId: "verifier",
+    // explore = read-only tools. Routing is independent of role: model AND
+    // effort come from the verify lane (previously effort leaked in from the
+    // explore lane's built-in "low").
     role: "explore",
+    lane: "verify",
     task: verifyPrompt,
     targetFiles: editedPaths,
   };
@@ -190,7 +196,7 @@ export async function runVerifier(
     // instructions + tools as parent → prefix cache hits the parent's prior prefix.
     const { resultText } = await runAgentTask(
       verifyTask,
-      { ...models, sparkModel: reviewModel, parentMessagesRef: undefined },
+      { ...models, parentMessagesRef: undefined },
       bus,
       parentToolCallId,
       tasks.length + 1,

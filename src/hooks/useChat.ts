@@ -31,6 +31,7 @@ import { getWorkspaceCoordinator } from "../core/coordination/WorkspaceCoordinat
 import { getCwd } from "../core/cwd.js";
 import { setCoAuthorEnabled } from "../core/git/status.js";
 import { hasToolHooks, runHooks } from "../core/hooks/index.js";
+import { applyLaneEffort, formatLaneRoute, resolveLaneRoute } from "../core/llm/lane-routing.js";
 import {
   getModelContextInfo,
   getModelContextInfoSync,
@@ -44,7 +45,7 @@ import {
   isProviderOptionsError,
   supportsTemperature,
 } from "../core/llm/provider-options.js";
-import { resolveTaskModel } from "../core/llm/task-router.js";
+import { buildSubagentRouting } from "../core/llm/subagent-routing.js";
 import { onCompaction, writeDiary } from "../core/mcp/mempalace.js";
 import { bounceProxy, proxyHealthProbe } from "../core/proxy/lifecycle.js";
 import { resolveRetrySettings } from "../core/retry/settings.js";
@@ -900,11 +901,11 @@ export function useChat({
       }, 1000);
 
       try {
-        const compactModelId = resolveTaskModel(
-          "compact",
-          effectiveConfig.taskRouter,
-          activeModelRef.current,
-        );
+        // Model and effort for compaction come from the compact lane together.
+        const compactRoute = resolveLaneRoute("compact", effectiveConfig, {
+          parentModelId: activeModelRef.current,
+        });
+        const compactModelId = compactRoute.modelId ?? activeModelRef.current;
         const model = resolveModel(compactModelId);
         const modelLabel = getShortModelLabel(compactModelId);
 
@@ -995,7 +996,10 @@ export function useChat({
           providerOptions,
           headers,
           contextWindow: compactCtxWindow,
-        } = await buildProviderOptions(compactModelId, effectiveConfig);
+        } = await buildProviderOptions(
+          compactModelId,
+          applyLaneEffort(effectiveConfig, compactRoute),
+        );
         // Update pinned context window for the compaction model (authoritative from API)
         if (compactCtxWindow > 0) {
           pinnedContextWindow.current.set(compactModelId, compactCtxWindow);
@@ -2134,34 +2138,21 @@ export function useChat({
           setActiveSessionId(routingSessionIdRef.current);
           const model = resolveModel(modelId);
 
-          // Resolve subagent models from task router
-          // spark/ember are primary; coding/exploration/trivial are legacy config fallbacks
-          const tr = effectiveConfig.taskRouter;
-          const sparkModelId = tr?.spark ?? tr?.exploration ?? tr?.trivial ?? undefined;
-          const emberModelId = tr?.ember ?? tr?.coding ?? undefined;
-          const webSearchModelId = tr?.webSearch ?? undefined;
-          const desloppifyModelId = tr?.desloppify ?? undefined;
-          const verifyModelId = tr?.verify ?? undefined;
-          const hasSubagentModels =
-            sparkModelId || emberModelId || desloppifyModelId || verifyModelId;
-          const subagentModels = hasSubagentModels
-            ? {
-                spark: sparkModelId ? resolveModel(sparkModelId) : undefined,
-                ember: emberModelId ? resolveModel(emberModelId) : undefined,
-                desloppify: desloppifyModelId ? resolveModel(desloppifyModelId) : undefined,
-                verify: verifyModelId ? resolveModel(verifyModelId) : undefined,
-              }
-            : undefined;
-          let webSearchModel: ReturnType<typeof resolveModel> | undefined;
-          try {
-            webSearchModel = webSearchModelId ? resolveModel(webSearchModelId) : undefined;
-          } catch (err) {
+          // Resolve worker-lane models from the task router — one shared core
+          // resolver (model + effort per lane) from this turn's effective config.
+          const {
+            subagentModels,
+            webSearchModel,
+            webSearchModelId,
+            routes: laneRoutes,
+          } = buildSubagentRouting(effectiveConfig, modelId, resolveModel, (lane, id, err) => {
+            if (lane !== "webSearch") throw err;
             logBackgroundError(
               "web-search-resolve",
-              `webSearch model "${webSearchModelId}" failed to resolve: ${err instanceof Error ? err.message : String(err)}`,
+              `webSearch model "${id}" failed to resolve: ${err instanceof Error ? err.message : String(err)}`,
             );
-            webSearchModel = undefined;
-          }
+          });
+          logBackgroundError("router:lanes", laneRoutes.map(formatLaneRoute).join("\n"));
           webSearchModelLabelRef.current = webSearchModel
             ? (() => {
                 const id = webSearchModelId as string;
@@ -2428,6 +2419,7 @@ export function useChat({
             disabledTools: useToolsStore.getState().disabledTools,
             tabId,
             tabLabel,
+            routingConfig: effectiveConfig,
           });
           let result: StreamTextResult<ToolSet, never> | undefined;
           for (let degradeLevel = 0; degradeLevel <= 2; degradeLevel++) {
@@ -2473,6 +2465,7 @@ export function useChat({
                         disabledTools: useToolsStore.getState().disabledTools,
                         tabId,
                         tabLabel,
+                        routingConfig: effectiveConfig,
                       });
                     })();
               result = (await runWithEditOrigin(

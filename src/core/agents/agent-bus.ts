@@ -8,6 +8,7 @@
 
 import { logBackgroundError } from "../../stores/errors.js";
 import type { TaskTier } from "../../types/index.js";
+import type { LaneEffort } from "../llm/lane-routing.js";
 
 export function normalizePath(p: string): string {
   if (typeof p !== "string" || p.length === 0) return "";
@@ -53,6 +54,12 @@ export interface AgentTask {
   tabId?: string;
   targetFileCount?: number;
   targetFiles?: string[];
+  /** Routing lane (model + effort). Default: derived from role — see resolveTaskLane. */
+  lane?: string;
+  /** Explicit per-dispatch model override ("provider/model"). Highest precedence. */
+  model?: string;
+  /** Explicit per-dispatch effort override. Highest precedence. */
+  effort?: LaneEffort;
 }
 
 export interface AgentResult {

@@ -38,6 +38,14 @@ export interface MultiAgentEvent {
   modelId?: string;
   /** Execution tier: spark (mirror), ember (diverge), desloppify */
   tier?: string;
+  /** Routing lane that supplied model + effort (spark, ember, verify, …) */
+  lane?: string;
+  /** Resolved reasoning effort (undefined = provider default) */
+  effort?: string;
+  /** Where the model came from: lane | legacy | parent | override | … */
+  modelSource?: string;
+  /** Where the effort came from: lane | builtin | global | override | unset */
+  effortSource?: string;
   /** Per-agent stats (emitted on agent-done/agent-error) */
   toolUses?: number;
   tokenUsage?: { input: number; output: number; total: number };

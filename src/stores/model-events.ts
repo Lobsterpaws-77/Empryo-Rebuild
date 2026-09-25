@@ -35,6 +35,14 @@ export interface ModelCallEvent {
   cacheRead?: number;
   cacheWrite?: number;
   errorMessage?: string;
+  /** Routing lane (subagents) — see core/llm/lane-routing.ts */
+  lane?: string;
+  /** Resolved reasoning effort sent with this call (undefined = provider default) */
+  effort?: string;
+  /** Where the effort came from: lane | builtin | global | override | unset */
+  effortSource?: string;
+  /** Where the model came from: lane | legacy | parent | override | … */
+  modelSource?: string;
 }
 
 export interface ModelAggregate {
