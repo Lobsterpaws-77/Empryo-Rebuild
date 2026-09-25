@@ -244,3 +244,57 @@ model is not wrapped at all, so behaviour is identical to before.
 
 **LOCAL ACCEPTANCE REQUIRED:** a live strict failure and fallback with real
 provider accounts.
+
+## CP4 — Review scope + worker-aware repair
+
+**Classification:** SHARED CORE. The desktop Review panel and Apply button are
+**BLOCKED BY MISSING EMPRYO DESKTOP SOURCE**.
+
+### Current Review scope (reproduced from source; unchanged)
+
+The core "Review" is the post-dispatch verifier (`verify` lane,
+`agentFeatures.verifyEdits`).
+
+| Case | Behaviour |
+|---|---|
+| Worker-authored edits | Reviewed. Scope is every file edited on the dispatch's AgentBus, including de-sloppify and repair |
+| Mixed edits from several workers | All of them are reviewed together, with the requesting task context |
+| Prime (Forge)-authored edits | Not reviewed. They happen outside a dispatch, and the core has no separate Review feature |
+| Clean / no edits, or no code tasks | No review (`null`) |
+
+This scope is coherent for a post-dispatch check, and no provenance defect
+was found, so it is left unchanged. The gap was what happens on a FAIL
+verdict: the findings went back to the Forge, which then usually edited
+the code itself.
+
+### Change: review → repair worker → recheck (opt-in)
+
+- `agentFeatures.repairOnReviewFail` (toggle in `/agent-features`; default
+  off) and `maxRepairRounds` (1–3; default 1).
+- On `VERDICT: FAIL`, the findings go to a **repair worker** on the new
+  `repair` lane, scoped to the worker-edited files. The verifier then
+  re-runs; its deterministic typecheck and tests are the targeted
+  validation. The loop is bounded by `maxRepairRounds`.
+- The `repair` lane has a `taskRouter.repair` model and `effort.repair`. When
+  unset, it runs as the configured coder (`ember`), with model **and** effort
+  inherited together.
+- The Forge keeps coordination: it receives the verdict and any repair and
+  recheck sections. If the result is still FAIL, the tool output tells it to
+  dispatch a code agent rather than edit directly, unless the user asked it
+  to implement the fix itself.
+- Multi-agent dispatch releases the workspace lock before review. Repair
+  re-acquires it for its own edits (reference-counted `agentStarted` /
+  `agentFinished`).
+- No repair on PASS, PARTIAL or UNKNOWN verdicts, in read-only mode, or after
+  an abort. A failed repair worker stops the loop and is reported.
+- `/router` has a new Repair row.
+
+### Validation
+
+- `tests/review-repair.test.ts` (14): scope cases, repair task scoping,
+  the loop with lock hooks, bounded rounds, the no-repair cases,
+  repair-failure handling, and repair-lane inheritance.
+- Full suite 3156 pass / 14 fail (baseline only). typecheck and lint pass.
+
+**LOCAL ACCEPTANCE REQUIRED:** a live review FAIL → repair → recheck with
+real models.

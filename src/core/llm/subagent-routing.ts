@@ -27,6 +27,7 @@ export interface SubagentLaneModels {
   ember?: LanguageModel;
   desloppify?: LanguageModel;
   verify?: LanguageModel;
+  repair?: LanguageModel;
 }
 
 export interface SubagentRouting {
@@ -41,7 +42,7 @@ export interface SubagentRouting {
   strict: { violations: StrictViolation[]; notes: string[] };
 }
 
-const WORKER_LANES = ["spark", "ember", "desloppify", "verify"] as const;
+const WORKER_LANES = ["spark", "ember", "desloppify", "verify", "repair"] as const;
 
 /**
  * @param config        EFFECTIVE (global + project) config for this turn

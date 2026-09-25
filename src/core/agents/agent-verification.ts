@@ -208,3 +208,136 @@ export async function runVerifier(
     return null;
   }
 }
+
+// ── Review-driven repair ────────────────────────────────────────────────
+// Findings from the verifier go to a repair WORKER (repair lane — by default
+// the configured coder), then the verifier re-checks. The Forge keeps
+// ownership of orchestration and gets the final verdict; it is not turned
+// into the coder just because findings exist.
+
+export type ReviewVerdict = "PASS" | "FAIL" | "PARTIAL" | "UNKNOWN";
+
+/** Last `VERDICT: X` line in a verifier report. */
+export function parseVerdict(text: string | null | undefined): ReviewVerdict {
+  if (!text) return "UNKNOWN";
+  const matches = [...text.matchAll(/VERDICT:\s*(PASS|FAIL|PARTIAL)\b/gi)];
+  const last = matches.at(-1)?.[1]?.toUpperCase();
+  return last === "PASS" || last === "FAIL" || last === "PARTIAL" ? last : "UNKNOWN";
+}
+
+const REPAIR_PROMPT = `${CORE_RULES}
+
+ROLE: repair agent. A reviewer found defects in code that other agents just wrote. Fix exactly the findings below — nothing else. Do not refactor, restyle, or widen scope. Read the cited ranges, make minimal edits, then report in under 150 words: each finding → fixed / not reproducible / cannot fix (why).`;
+
+export function getMaxRepairRounds(models: SubagentModels): number {
+  const v = models.agentFeatures?.maxRepairRounds;
+  if (v == null || !Number.isFinite(v)) return 1;
+  return Math.min(3, Math.max(1, Math.round(v)));
+}
+
+export async function runRepair(
+  bus: AgentBus,
+  tasks: AgentTask[],
+  models: SubagentModels,
+  parentToolCallId: string,
+  findings: string,
+  round: number,
+  abortSignal?: AbortSignal,
+  runner: typeof runAgentTask = runAgentTask,
+): Promise<string | null> {
+  const editedPaths = [...bus.getEditedFiles().keys()];
+  const repairTask: AgentTask = {
+    agentId: round === 1 ? "repair" : `repair-${String(round)}`,
+    role: "code",
+    tier: "ember",
+    lane: "repair",
+    task: `${REPAIR_PROMPT}\n\n--- Reviewer findings ---\n${findings.trim()}\n\n--- Files in scope ---\n${editedPaths.map((p) => `- ${p}`).join("\n")}`,
+    targetFiles: editedPaths,
+  };
+  bus.registerTasks([repairTask]);
+  try {
+    const { resultText } = await runner(
+      repairTask,
+      { ...models, parentMessagesRef: undefined },
+      bus,
+      parentToolCallId,
+      tasks.length + 1,
+      abortSignal,
+    );
+    return resultText;
+  } catch (err) {
+    logBackgroundError("repair", err instanceof Error ? err.message : String(err));
+    return null;
+  }
+}
+
+export interface ReviewRepairHooks {
+  /** Re-acquire the workspace edit lock before a repair worker edits. */
+  beforeRepair?: () => void;
+  /** Release it again once the repair worker finishes. */
+  afterRepair?: () => void;
+}
+
+/**
+ * Verify, and — when enabled and the verdict is FAIL — repair via the repair
+ * lane and re-verify, up to maxRepairRounds. Returns the report sections to
+ * append to the dispatch output (null when verification is off / no edits).
+ */
+export async function runReviewAndRepair(
+  bus: AgentBus,
+  tasks: AgentTask[],
+  models: SubagentModels,
+  parentToolCallId: string,
+  abortSignal?: AbortSignal,
+  hooks?: ReviewRepairHooks,
+  deps: { verify: typeof runVerifier; repair: typeof runRepair } = {
+    verify: runVerifier,
+    repair: runRepair,
+  },
+): Promise<string | null> {
+  let report = await deps.verify(bus, tasks, models, parentToolCallId, abortSignal);
+  if (!report) return null;
+  if (models.agentFeatures?.repairOnReviewFail !== true || models.readOnly) return report;
+
+  const parts = [report];
+  const maxRounds = getMaxRepairRounds(models);
+  let verdict = parseVerdict(report);
+  let round = 0;
+  while (verdict === "FAIL" && round < maxRounds && !abortSignal?.aborted) {
+    round++;
+    hooks?.beforeRepair?.();
+    let repaired: string | null;
+    try {
+      repaired = await deps.repair(
+        bus,
+        tasks,
+        models,
+        parentToolCallId,
+        report,
+        round,
+        abortSignal,
+      );
+    } finally {
+      hooks?.afterRepair?.();
+    }
+    parts.push(
+      `\n\n### Repair (round ${String(round)}, repair lane)\n${repaired ?? "Repair worker failed — see errors."}`,
+    );
+    if (!repaired) break;
+    const recheck = await deps.verify(bus, tasks, models, parentToolCallId, abortSignal);
+    if (!recheck) break;
+    report = recheck;
+    verdict = parseVerdict(recheck);
+    parts.push(recheck.replace("### Verification", `### Verification (recheck ${String(round)})`));
+  }
+  if (round > 0) {
+    parts.push(
+      verdict === "PASS"
+        ? `\n\nReview → repair → recheck: PASS after ${String(round)} repair round(s).`
+        : `\n\nReview → repair → recheck: still ${verdict} after ${String(round)} repair round(s). ` +
+            "Decide next step as coordinator — dispatch a code agent with the remaining findings " +
+            "rather than editing directly, unless the user asked you to implement it yourself.",
+    );
+  }
+  return parts.join("");
+}

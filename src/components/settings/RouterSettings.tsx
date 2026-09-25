@@ -109,6 +109,7 @@ const SECTIONS: SectionDef[] = [
         hint: "Polish & style fixes",
       },
       { kind: "slot", key: "verify", label: "Review", icon: "review", hint: "Adversarial review" },
+      { kind: "slot", key: "repair", label: "Repair", icon: "edit", hint: "Fixes review findings" },
     ],
   },
   {
@@ -200,6 +201,7 @@ export function RouterSettings({
         "webSearch",
         "desloppify",
         "verify",
+        "repair",
         "compact",
         "semantic",
       ];

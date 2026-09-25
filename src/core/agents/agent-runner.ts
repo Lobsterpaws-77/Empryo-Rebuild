@@ -222,6 +222,9 @@ export function laneModel(lane: string, models: SubagentModels): LanguageModel {
       return models.verifyModel ?? models.defaultModel;
     case "desloppify":
       return models.desloppifyModel ?? models.defaultModel;
+    case "repair":
+      // Mirrors the repair lane policy: own model, else the coder (ember) lane.
+      return models.laneModels?.repair ?? models.emberModel ?? models.defaultModel;
     case "webSearch":
       return models.webSearchModel ?? models.defaultModel;
     default:

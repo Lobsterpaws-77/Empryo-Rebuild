@@ -665,6 +665,7 @@ interface ForgeAgentOptions {
     ember?: LanguageModel;
     desloppify?: LanguageModel;
     verify?: LanguageModel;
+    repair?: LanguageModel;
   };
   webSearchModel?: LanguageModel;
   onApproveWebSearch?: (query: string) => Promise<boolean>;
@@ -902,6 +903,7 @@ export function createForgeAgent({
         emberModel: subagentModels?.ember,
         desloppifyModel: subagentModels?.desloppify,
         verifyModel: subagentModels?.verify,
+        laneModels: subagentModels?.repair ? { repair: subagentModels.repair } : undefined,
         webSearchModel,
         routingConfig,
         parentModelId: fullModelId,

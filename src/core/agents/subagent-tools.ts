@@ -28,7 +28,7 @@ import {
   sleep,
   stripContextManagement,
 } from "./agent-runner.js";
-import { runDesloppify, runVerifier } from "./agent-verification.js";
+import { runDesloppify, runReviewAndRepair } from "./agent-verification.js";
 import { createCodeAgent } from "./code.js";
 import { createExploreAgent } from "./explore.js";
 import { isApiExportEnabled } from "./step-utils.js";
@@ -913,7 +913,13 @@ export function buildSubagentTools(models: SubagentModels) {
               abortSignal,
             );
 
-            const verifyResult = await runVerifier(bus, [task], models, toolCallId, abortSignal);
+            const verifyResult = await runReviewAndRepair(
+              bus,
+              [task],
+              models,
+              toolCallId,
+              abortSignal,
+            );
 
             const edited = [...editedMap.keys()];
 
@@ -1117,7 +1123,20 @@ export function buildSubagentTools(models: SubagentModels) {
           editingDone = true;
           if (activeTabId) getWorkspaceCoordinator().agentFinished(activeTabId);
 
-          const verifyResult = await runVerifier(bus, tasks, models, toolCallId, combinedAbort);
+          const verifyResult = await runReviewAndRepair(
+            bus,
+            tasks,
+            models,
+            toolCallId,
+            combinedAbort,
+            activeTabId
+              ? {
+                  // Repair edits again — hold the workspace lock while it runs.
+                  beforeRepair: () => getWorkspaceCoordinator().agentStarted(activeTabId),
+                  afterRepair: () => getWorkspaceCoordinator().agentFinished(activeTabId),
+                }
+              : undefined,
+          );
           if (verifyResult) sections.push(verifyResult);
 
           const m = bus.metrics;

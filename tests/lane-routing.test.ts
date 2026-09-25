@@ -217,6 +217,7 @@ describe("resolveLaneRoute — acceptance matrix", () => {
       "default",
       "spark",
       "ember",
+      "repair",
       "webSearch",
       "desloppify",
       "verify",

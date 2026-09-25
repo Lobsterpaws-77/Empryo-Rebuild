@@ -543,6 +543,7 @@ function handleAgentFeatures(_input: string, ctx: CommandContext): void {
   const featureDesc: Record<string, string> = {
     desloppify: "cleanup pass after code agents (needs model in /router)",
     verifyEdits: "adversarial review after code agents (needs exploration model)",
+    repairOnReviewFail: "on review FAIL, a repair worker fixes findings, then re-review",
     tierRouting: "auto-route trivial tasks to cheaper models",
     dispatchCache: "cache file reads across dispatch boundaries",
     targetFileValidation: "require file paths on dispatch tasks",
@@ -550,12 +551,13 @@ function handleAgentFeatures(_input: string, ctx: CommandContext): void {
   const featureLabel: Record<string, string> = {
     desloppify: "De-sloppify",
     verifyEdits: "Verify Edits",
+    repairOnReviewFail: "Repair on Review Fail",
     tierRouting: "Tier Routing",
     dispatchCache: "Dispatch Cache",
     targetFileValidation: "Target File Validation",
   };
   // Features that default to off when not explicitly set in config
-  const defaultOff = new Set(["desloppify", "verifyEdits"]);
+  const defaultOff = new Set(["desloppify", "verifyEdits", "repairOnReviewFail"]);
   const isOn = (key: string, state: Record<string, unknown>) =>
     defaultOff.has(key) ? state[key] === true : state[key] !== false;
   const localState = { ...ctx.agentFeatures };

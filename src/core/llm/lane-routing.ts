@@ -46,6 +46,7 @@ export type BuiltinLane =
   | "default"
   | "spark"
   | "ember"
+  | "repair"
   | "webSearch"
   | "desloppify"
   | "verify"
@@ -83,6 +84,12 @@ export interface LanePolicy {
   effortFallback: LaneEffortFallback;
   /** False when the lane's LLM call carries no reasoning options (e.g. embeddings). */
   effortConfigurable: boolean;
+  /**
+   * Lane to inherit from when this lane has no model of its own. The model
+   * and effort are then taken from that lane TOGETHER (a coherent pair).
+   * If this lane sets its own model, effort falls back normally instead.
+   */
+  inheritLane?: string;
 }
 
 const BUILTIN_POLICIES: Record<BuiltinLane, LanePolicy> = {
@@ -122,6 +129,17 @@ const BUILTIN_POLICIES: Record<BuiltinLane, LanePolicy> = {
     modelFallback: "parent",
     effortFallback: { kind: "global" },
     effortConfigurable: true,
+  },
+  // Review-driven repair worker. Unset → runs as the configured coder (ember)
+  // with ember's model AND effort; set its own model/effort to diverge.
+  repair: {
+    id: "repair",
+    label: "Repair",
+    modelKeys: ["repair"],
+    modelFallback: "parent",
+    effortFallback: { kind: "global" },
+    effortConfigurable: true,
+    inheritLane: "ember",
   },
   webSearch: {
     id: "webSearch",
@@ -196,6 +214,8 @@ export type LaneModelSource =
   | "override"
   | "lane"
   | "legacy"
+  /** Taken from the policy's inheritLane (e.g. repair → ember). */
+  | "inherited"
   | "router-default"
   | "parent"
   | "disabled";
@@ -207,7 +227,9 @@ export type LaneEffortSource =
   | "global"
   | "unset"
   /** Clamped by the strict routing policy (see strict-routing.ts). */
-  | "policy";
+  | "policy"
+  /** Taken, with the model, from the policy's inheritLane. */
+  | "inherited";
 
 /**
  * How a resolved effort reaches the provider for this model:
@@ -277,6 +299,7 @@ export function resolveLaneRoute(
   let modelId: string | null = null;
   let modelSource: LaneModelSource = "disabled";
   let modelKey: string | undefined;
+  let inherited: LaneRoute | undefined;
   const overrideModel = nonEmpty(ctx.override?.model);
   if (overrideModel) {
     modelId = overrideModel;
@@ -290,6 +313,17 @@ export function resolveLaneRoute(
         modelSource = i === 0 ? "lane" : "legacy";
         modelKey = `taskRouter.${key}`;
         break;
+      }
+    }
+    if (!modelId && policy.inheritLane) {
+      const parent = resolveLaneRoute(policy.inheritLane, config, {
+        parentModelId: ctx.parentModelId,
+      });
+      inherited = parent;
+      if (parent.modelId) {
+        modelId = parent.modelId;
+        modelSource = "inherited";
+        modelKey = `lane:${parent.lane}`;
       }
     }
     if (!modelId) {
@@ -317,6 +351,14 @@ export function resolveLaneRoute(
     effort = laneEffort;
     effortSource = "lane";
     effortKey = `taskRouter.effort.${lane}`;
+  } else if (inherited && modelSource === "inherited") {
+    // Model came from the inherited lane → effort comes from it too.
+    effort = inherited.effort;
+    // Only an explicit effort on the inherited lane is re-labelled; a global
+    // or built-in fallback keeps its own source (and exact provider shaping).
+    const explicit = inherited.effortSource === "lane" || inherited.effortSource === "override";
+    effortSource = explicit ? "inherited" : inherited.effortSource;
+    effortKey = inherited.effortKey;
   } else if (
     policy.effortFallback.kind === "builtin" &&
     globalEffort !== undefined &&
@@ -407,6 +449,7 @@ const MODEL_SOURCE_LABEL: Record<LaneModelSource, string> = {
   override: "dispatch override",
   lane: "lane",
   legacy: "legacy key",
+  inherited: "inherited lane",
   "router-default": "router default",
   parent: "inherits Forge model",
   disabled: "disabled",
@@ -417,6 +460,7 @@ const EFFORT_SOURCE_LABEL: Record<LaneEffortSource, string> = {
   lane: "lane",
   builtin: "built-in lane default",
   policy: "clamped by strict policy",
+  inherited: "inherited lane",
   global: "inherits global effort",
   unset: "provider default",
 };

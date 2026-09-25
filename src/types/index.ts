@@ -15,6 +15,8 @@ export interface TaskRouter {
   webSearch: string | null;
   desloppify: string | null;
   verify: string | null;
+  /** Model for review-driven repair workers. Unset → uses the Code (ember) lane. */
+  repair?: string | null;
   compact: string | null;
   semantic: string | null;
   default: string | null;
@@ -331,6 +333,14 @@ export interface AgentFeatures {
   targetFileValidation?: boolean;
   /** Run a verification agent after code agents to adversarially review changes. Default: false — enable via /agent-features or config */
   verifyEdits?: boolean;
+  /**
+   * When the verifier returns VERDICT: FAIL, hand the findings to a repair
+   * worker (repair lane → configured coder) and re-verify, instead of
+   * returning the failure for the Forge to fix itself. Default: false.
+   */
+  repairOnReviewFail?: boolean;
+  /** Max repair → re-verify rounds per dispatch (1–3). Default: 1. */
+  maxRepairRounds?: number;
   /** Allow the agent to search, install, and load skills. Default: true */
   agentSkills?: boolean;
   /** Only expose core tools initially; deferred tools loaded via request_tools. Default: false — all tools active to avoid roundtrips. */
