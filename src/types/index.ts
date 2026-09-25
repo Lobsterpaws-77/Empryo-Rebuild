@@ -27,10 +27,30 @@ export interface TaskRouter {
    * Resolved together with the lane model from the same scope.
    */
   effort?: Partial<Record<string, EffortLevel | "off" | null>>;
+  /** Opt-in fail-closed routing policy (see core/llm/strict-routing.ts). */
+  strict?: StrictRoutingPolicy;
   /** @config-compat Legacy fields — mapped to spark/ember on load. Hidden from /router UI. */
   coding?: string | null;
   exploration?: string | null;
   trivial?: string | null;
+}
+
+/** Per-lane constraints for strict routing. Omitted fields are unconstrained. */
+export interface StrictLanePolicy {
+  /** Permitted models ("provider/model"). */
+  models?: string[];
+  /** Models permitted only as explicit, visible fallbacks. */
+  fallbackModels?: string[];
+  /** Permitted reasoning efforts. An unset lane effort counts as "off". */
+  efforts?: (EffortLevel | "off")[];
+  /** Out-of-policy effort: "reject" (default) or "clamp" to the nearest permitted value. */
+  effortViolation?: "reject" | "clamp";
+}
+
+/** Opt-in strict routing. Off unless `enabled` is true. */
+export interface StrictRoutingPolicy {
+  enabled?: boolean;
+  lanes?: Record<string, StrictLanePolicy>;
 }
 
 export interface ToolResult {
