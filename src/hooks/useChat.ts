@@ -12,6 +12,7 @@ import { generateText } from "ai";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { StreamSegment } from "../components/chat/StreamSegmentList.js";
 import type { LiveToolCall } from "../components/chat/ToolCallDisplay.js";
+import { forgeActorId, reportActivity } from "../core/activity/activity.js";
 import { normalizePath } from "../core/agents/agent-bus.js";
 import { createForgeAgent } from "../core/agents/index.js";
 import { AbnormalFinishError } from "../core/agents/stream-options.js";
@@ -698,6 +699,23 @@ export function useChat({
   const [pendingPlanReview, setPendingPlanReview] = useState<PendingPlanReview | null>(null);
   const pendingPlanReviewRef = useRef(pendingPlanReview);
   pendingPlanReviewRef.current = pendingPlanReview;
+  // Blocked-on-user is harness state too — shown distinctly from provider waits.
+  useEffect(() => {
+    const actorId = forgeActorId(tabId);
+    if (pendingPlanReview) {
+      reportActivity({ type: "blocked", actorId, label: "Waiting for plan review" });
+    } else if (pendingQuestion) {
+      reportActivity({
+        type: "blocked",
+        actorId,
+        label: pendingQuestion.isPermission
+          ? "Waiting for your approval"
+          : "Waiting for your answer",
+      });
+    } else {
+      reportActivity({ type: "unblocked", actorId });
+    }
+  }, [pendingQuestion, pendingPlanReview, tabId]);
   const planPostActionRef = useRef<{
     action: "execute" | "clear_execute" | "cancel" | "revise";
     planContent: string | null;
@@ -2018,6 +2036,13 @@ export function useChat({
 
       const unsubMultiAgent = onMultiAgentEvent((event) => {
         if (!isOurDispatch(event.parentToolCallId)) return;
+        if (event.agentId) {
+          const key = `${event.parentToolCallId}:${event.agentId}`;
+          if (event.type === "agent-start") runningWorkers.add(key);
+          else if (event.type === "agent-done" || event.type === "agent-error")
+            runningWorkers.delete(key);
+          reportActivity({ type: "workers", actorId: forgeActor, active: runningWorkers.size });
+        }
         // ── Per-agent snapshot for /context Dispatch tab ──
         if (event.type === "dispatch-start") {
           useStatusBarStore
@@ -2136,6 +2161,27 @@ export function useChat({
       stallRetryPendingRef.current = false;
 
       const responseStartedAt = Date.now();
+      // ── Harness activity (token-free status for this tab's Forge) ──
+      const forgeActor = forgeActorId(tabId);
+      let lastTurnError: unknown = null;
+      let lastChunkKind = "";
+      let lastChunkAt = 0;
+      const reportChunk = (kind: "text" | "reasoning" | "other") => {
+        const now = Date.now();
+        if (kind === lastChunkKind && now - lastChunkAt < 500) return;
+        lastChunkKind = kind;
+        lastChunkAt = now;
+        reportActivity({ type: "chunk", actorId: forgeActor, kind });
+      };
+      const runningWorkers = new Set<string>();
+      reportActivity({
+        type: "start",
+        actorId: forgeActor,
+        kind: "forge",
+        name: tabLabel ? `Forge · ${tabLabel}` : "Forge",
+        tabId,
+        modelId: activeModelRef.current,
+      });
 
       for (;;) {
         // Reset state for retry
@@ -2154,6 +2200,8 @@ export function useChat({
 
         try {
           setIsLoading(true);
+          lastTurnError = null;
+          reportActivity({ type: "request", actorId: forgeActor });
           const modelId = activeModelRef.current;
           // Pin upstream gateway routing to this tab's conversation id
           // (x-session-id / x-session-affinity) for prompt-cache locality.
@@ -2788,6 +2836,35 @@ export function useChat({
           )[Symbol.asyncIterator]();
           for await (const part of { [Symbol.asyncIterator]: () => streamIterator }) {
             markActivity();
+            switch (part.type) {
+              case "text-delta":
+                reportChunk("text");
+                break;
+              case "reasoning-delta":
+                reportChunk("reasoning");
+                break;
+              case "tool-input-start":
+                lastChunkKind = "";
+                reportActivity({ type: "tool-start", actorId: forgeActor, tool: part.toolName });
+                break;
+              case "tool-result":
+              case "tool-error":
+                lastChunkKind = "";
+                reportActivity({
+                  type: "tool-end",
+                  actorId: forgeActor,
+                  tool: part.toolName,
+                  ok: part.type === "tool-result",
+                });
+                break;
+              case "start-step":
+              case "finish-step":
+                lastChunkKind = "";
+                reportActivity({ type: "request", actorId: forgeActor });
+                break;
+              default:
+                reportChunk("other");
+            }
             if (yieldBeforeNext || Date.now() - lastYieldTs >= YIELD_BUDGET_MS) {
               yieldBeforeNext = false;
               lastYieldTs = Date.now();
@@ -3438,6 +3515,7 @@ export function useChat({
           completeInProgressTasks(tabId);
           break;
         } catch (err: unknown) {
+          lastTurnError = err;
           if (flushTimerRef.current) {
             clearInterval(flushTimerRef.current);
             flushTimerRef.current = null;
@@ -3552,6 +3630,7 @@ export function useChat({
           // Retry on transient errors during streaming (e.g. "socket connection closed unexpectedly")
           if (isTransient && !isStallRetry) {
             streamRetryCount++;
+            reportActivity({ type: "retry", actorId: forgeActor, error: err });
             if (streamRetryCount <= MAX_TRANSIENT_RETRIES && !abortController.signal.aborted) {
               const delay = RETRY_BASE_DELAY_MS * 2 ** (streamRetryCount - 1) + Math.random() * 500;
               setMessages((prev) => [
@@ -3697,6 +3776,7 @@ export function useChat({
           // We preserve partial work (completedCalls, fullText, coreMessages)
           // so the agent has full context on the retry.
           if (isStallRetry) {
+            reportActivity({ type: "retry", actorId: forgeActor, error: err, stall: true });
             if (flushTimerRef.current) {
               clearInterval(flushTimerRef.current);
               flushTimerRef.current = null;
@@ -4018,6 +4098,15 @@ export function useChat({
           unsubToolProgress();
           if (visibleRef.current) useStatusBarStore.getState().setSubagentChars(0);
           if (abortController.signal.aborted) getWorkspaceCoordinator().releaseAll(tabId);
+          if (!stallRetryPendingRef.current) {
+            reportActivity(
+              userAbortedRef.current
+                ? { type: "end", actorId: forgeActor, outcome: "cancelled" }
+                : lastTurnError
+                  ? { type: "end", actorId: forgeActor, outcome: "failed", error: lastTurnError }
+                  : { type: "end", actorId: forgeActor, outcome: "done" },
+            );
+          }
           if (!stallRetryPendingRef.current) setIsLoading(false);
           // ── Stop hook ── (fires when agent finishes responding)
           if (!stallRetryPendingRef.current) {

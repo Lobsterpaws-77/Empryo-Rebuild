@@ -1,5 +1,6 @@
 import { TextAttributes } from "@opentui/core";
 import { memo, useEffect, useMemo, useRef, useState } from "react";
+import { workerActorId } from "../../core/activity/worker-bridge.js";
 import type { AgentStatsEvent, SubagentStep } from "../../core/agents/subagent-events.js";
 import { getCwd } from "../../core/cwd.js";
 import { icon as getIcon, icon } from "../../core/icons.js";
@@ -15,6 +16,7 @@ import { parsePlanOutput } from "../../types/plan-schema.js";
 import { buildPrefix, buildTree, flattenTree } from "../layout/ChangedFiles.js";
 import { Spinner } from "../layout/shared.js";
 import { StructuredPlanView } from "../plan/StructuredPlanView.js";
+import { WorkerActivityText } from "./ActivityLine.js";
 import { DiffView } from "./DiffView.js";
 import { useDispatchDisplay } from "./dispatch-display.js";
 import { ImageDisplay } from "./ImageDisplay.js";
@@ -223,6 +225,7 @@ const MultiAgentChildRow = memo(
     isLast,
     childSteps,
     liveStats,
+    parentToolCallId,
   }: {
     agentId: string;
     info: AgentInfo;
@@ -230,6 +233,8 @@ const MultiAgentChildRow = memo(
     isLast: boolean;
     childSteps: SubagentStep[];
     liveStats?: AgentStatsEvent;
+    /** Dispatch tool call id — keys this worker's harness activity. */
+    parentToolCallId?: string;
   }) {
     const t = useTheme();
     const roleIcon =
@@ -312,7 +317,8 @@ const MultiAgentChildRow = memo(
             ) : null}
             {modelLabel ? (
               <span fg={isDone ? t.textDim : t.success}>
-                [{icon("model")} {modelLabel}]
+                [{icon("model")} {modelLabel}
+                {info.effort ? ` · ${info.effort}` : ""}]
               </span>
             ) : null}
             {stepCount != null && stepCount > 0 && !isDone ? (
@@ -449,7 +455,11 @@ const MultiAgentChildRow = memo(
                       {"  "}└{" "}
                     </span>
                     <Spinner inline color={t.textMuted} />
-                    <span fg={t.textMuted}> thinking...</span>
+                    {parentToolCallId ? (
+                      <WorkerActivityText actorId={workerActorId(parentToolCallId, agentId)} />
+                    ) : (
+                      <span fg={t.textMuted}> thinking...</span>
+                    )}
                   </text>
                 </box>
               )}
@@ -696,6 +706,7 @@ const ToolRow = memo(
                 isLast={isLastVisible && allAccountedFor}
                 childSteps={agentSteps}
                 liveStats={liveStats.get(agentId)}
+                parentToolCallId={tc.id}
               />
             );
           })}
@@ -1158,6 +1169,7 @@ export function DispatchSubtree({ call }: { call: LiveToolCall }) {
               isLast={isLastVisible && allAccountedFor}
               childSteps={agentSteps}
               liveStats={liveStats.get(agentId)}
+              parentToolCallId={call.id}
             />
           );
         })}

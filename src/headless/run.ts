@@ -1,6 +1,14 @@
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import type { LanguageModel, ModelMessage } from "ai";
+import {
+  type ActivityState,
+  describeActivity,
+  forgeActorId,
+  getActivityTracker,
+  onActivity,
+  reportActivity,
+} from "../core/activity/activity.js";
 import { normalizePath } from "../core/agents/agent-bus.js";
 import { createForgeAgent } from "../core/agents/index.js";
 import type { SharedCacheRef } from "../core/agents/subagent-tools.js";
@@ -269,6 +277,45 @@ interface TurnResult {
   exitCode: number;
 }
 
+/**
+ * Forward harness activity as `activity` events: every phase/label change,
+ * plus a heartbeat every 10s for actors that have been silent ≥15s (so a
+ * consumer sees "Waiting on provider — no activity for 4m 12s" live).
+ */
+function streamActivityEvents(emit: (e: HeadlessEvent) => void): () => void {
+  const last = new Map<string, string>();
+  const toEvent = (s: ActivityState, heartbeat?: boolean): HeadlessEvent => ({
+    type: "activity",
+    actor: s.actorId,
+    kind: s.kind,
+    name: s.name,
+    phase: s.phase,
+    label: s.label,
+    status: describeActivity(s, Date.now()),
+    ...(s.lane ? { lane: s.lane } : {}),
+    ...(s.modelId ? { model: s.modelId } : {}),
+    ...(s.effort ? { effort: s.effort } : {}),
+    ...(s.failure ? { failure: s.failure } : {}),
+    ...(heartbeat ? { heartbeat: true } : {}),
+  });
+  const unsub = onActivity((s) => {
+    const key = `${s.phase}|${s.label}`;
+    if (last.get(s.actorId) === key) return;
+    last.set(s.actorId, key);
+    emit(toEvent(s));
+  });
+  const timer = setInterval(() => {
+    const now = Date.now();
+    for (const s of getActivityTracker().all()) {
+      if (!s.endedAt && now - s.lastEventAt >= 15_000) emit(toEvent(s, true));
+    }
+  }, 10_000);
+  return () => {
+    unsub();
+    clearInterval(timer);
+  };
+}
+
 async function streamTurn(
   agent: ReturnType<typeof createForgeAgent>,
   messages: ModelMessage[],
@@ -301,6 +348,20 @@ async function streamTurn(
   let error: string | undefined;
   let exitCode = EXIT_OK;
 
+  // ── Harness activity (token-free) ──
+  const actor = forgeActorId("headless");
+  reportActivity({ type: "start", actorId: actor, kind: "forge", name: "Forge" });
+  let lastChunk = "";
+  let lastChunkAt = 0;
+  const chunk = (kind: "text" | "reasoning") => {
+    const now = Date.now();
+    if (kind === lastChunk && now - lastChunkAt < 500) return;
+    lastChunk = kind;
+    lastChunkAt = now;
+    reportActivity({ type: "chunk", actorId: actor, kind });
+  };
+  const stopActivityEvents = reporting.events ? streamActivityEvents(emit) : () => {};
+
   try {
     const result = await agent.stream({
       messages,
@@ -317,6 +378,29 @@ async function streamTurn(
         break;
       }
 
+      if (part.type === "start-step" || part.type === "finish-step") {
+        lastChunk = "";
+        reportActivity({ type: "request", actorId: actor });
+      } else if (part.type === "reasoning-delta") {
+        chunk("reasoning");
+      } else if (part.type === "tool-call") {
+        lastChunk = "";
+        reportActivity({
+          type: "tool-start",
+          actorId: actor,
+          tool: part.toolName,
+          args: (part as { input?: unknown }).input,
+        });
+      } else if (part.type === "tool-result" || part.type === "tool-error") {
+        lastChunk = "";
+        reportActivity({
+          type: "tool-end",
+          actorId: actor,
+          tool: part.toolName,
+          ok: part.type === "tool-result",
+        });
+      }
+
       if (part.type === "start-step") {
         const warnings = (part as { warnings?: Array<{ type: string; message?: string }> })
           .warnings;
@@ -331,6 +415,7 @@ async function streamTurn(
           }
         }
       } else if (part.type === "text-delta") {
+        chunk("text");
         output += part.text;
         if (reporting.events) {
           emit({ type: "text", content: part.text });
@@ -407,6 +492,14 @@ async function streamTurn(
     if (reporting.showProgress) stderrError(error);
     if (reporting.events) emit({ type: "error", error });
   }
+  reportActivity(
+    signal.aborted
+      ? { type: "end", actorId: actor, outcome: "cancelled" }
+      : error
+        ? { type: "end", actorId: actor, outcome: "failed", error }
+        : { type: "end", actorId: actor, outcome: "done" },
+  );
+  stopActivityEvents();
 
   return { output, steps, tokens, toolCalls, filesEdited: [...filesEdited], error, exitCode };
 }

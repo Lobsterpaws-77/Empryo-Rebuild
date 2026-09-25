@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { type ScrollBoxRenderable, TextAttributes } from "@opentui/core";
 import { memo, useCallback, useEffect, useMemo, useRef } from "react";
 import { useShallow } from "zustand/react/shallow";
+import { forgeActorId } from "../../core/activity/activity.js";
 import { ContextManager, type SharedContextResources } from "../../core/context/manager.js";
 import { getWorkspaceCoordinator } from "../../core/coordination/WorkspaceCoordinator.js";
 import { icon } from "../../core/icons.js";
@@ -27,6 +28,7 @@ import type {
   EditorIntegration,
   ImageAttachment,
 } from "../../types/index.js";
+import { ActivityLine } from "../chat/ActivityLine.js";
 import { CheckpointRail } from "../chat/CheckpointRail.js";
 import { FinalResponseLiveAutoView } from "../chat/FinalResponseView.js";
 import { InputBox } from "../chat/InputBox.js";
@@ -821,6 +823,8 @@ export const TabInstance = memo(function TabInstance({
                     </VerboseProvider>
                   </CodeExpandedProvider>
                 </ExpandToggleProvider>
+                {/* Harness activity — independent of verbose/folded display */}
+                <ActivityLine actorId={forgeActorId(tabId)} active={chat.isLoading} />
                 {tabVerbose ? (
                   <LoadingStatus
                     isLoading={chat.isLoading}

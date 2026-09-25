@@ -2,6 +2,9 @@ import type { ModelMessage, ProviderOptions } from "@ai-sdk/provider-utils";
 import { type LanguageModel, RetryError } from "ai";
 import { logBackgroundError } from "../../stores/errors.js";
 import type { TaskTier } from "../../types/index.js";
+import { reportActivity } from "../activity/activity.js";
+import { classifyFailure } from "../activity/failure.js";
+import { workerActorId } from "../activity/worker-bridge.js";
 import { getActiveProviderId } from "../llm/provider.js";
 import { enforceStrictRoute, StrictRoutingError } from "../llm/strict-routing.js";
 import { getSurfacedHintIds, runInSubagentScope } from "../memory/hints.js";
@@ -785,6 +788,12 @@ export async function runAgentTask(
       if (isRetryable(error, abortSignal)) {
         const tripped = bus.recordProviderFailure();
         if (tripped || attempt === MAX_RETRIES) break;
+        // Attributed, visible retry (reason classified from the error).
+        reportActivity({
+          type: "retry",
+          actorId: workerActorId(parentToolCallId, task.agentId),
+          error,
+        });
         if (!proxyBounced && !abortSignal?.aborted) {
           proxyBounced = await selfHealProxyIfNeeded(error);
         }
@@ -863,6 +872,7 @@ export async function runAgentTask(
     tabId: task.tabId,
     agentId: task.agentId,
     errorMessage: errMsg.slice(0, 500),
+    errorCategory: classifyFailure(lastError, { aborted: abortSignal?.aborted }),
     ...routeFields,
   });
 

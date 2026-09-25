@@ -298,3 +298,81 @@ the code itself.
 
 **LOCAL ACCEPTANCE REQUIRED:** a live review FAIL → repair → recheck with
 real models.
+
+## CP5 — harness activity, provider-wait/stall visibility, retry attribution
+
+**Classification:** SHARED CORE (`src/core/activity/*`, headless events)
+plus SOULFORGE/TUI ONLY (rendering).
+
+### What existed
+
+- The stall watchdog (`useChat`) tracked last-chunk time, tools in flight,
+  first content and pending prompts, but only used them to decide when to
+  abort and retry.
+- The Forge status line showed **rotating flavour text** ("Exploring…"),
+  not real state.
+- Worker cards showed the running tool, or a generic "thinking...".
+- Worker transient retries were silent until the final failure.
+- `model-events` recorded an error message but no category.
+
+### Added
+
+- `core/activity/activity.ts`: `ActivityTracker` keeps per-actor state for
+  the Forge and each worker. Phases: queued, requesting, streaming,
+  reasoning, tool, waiting-worker, blocked-user, retrying, done, failed,
+  cancelled.
+  - `toolActivityLabel()` produces human labels ("Reading src/a.ts",
+    "Running tests", "Editing …") from event data, with **zero model
+    tokens**.
+  - `describeActivity()` gives the one-line status, including "Waiting on
+    provider — no activity for 8m 14s", "Waiting on 2 workers — 1m 5s",
+    "Waiting for your approval — 3s", "Retrying (#2) — provider stalled
+    (watchdog)" and "Failed — context limit: …".
+  - A finished tool moves the actor to `requesting`, so an old tool label is
+    never shown while the harness is actually waiting.
+  - There is a bounded feed of meaningful transitions (reads and chunks are
+    excluded to avoid noise).
+- `core/activity/failure.ts`: `classifyFailure()` attributes errors to
+  cancelled, stall-watchdog, strict-routing, context-limit,
+  provider-rate-limit, provider-overloaded, provider-auth, provider-http,
+  provider-stream-closed, network, timeout, tool-failure,
+  dependency-failed, harness or unknown. It follows the cause chain and
+  never changes retry decisions.
+- `core/activity/worker-bridge.ts` translates the existing dispatch and step
+  events into worker activity, so routine activity needed no agent-code
+  changes. It also marks dispatched workers as queued until they start.
+- Forge reporting in `useChat` (TUI) and `headless/run.ts`: turn start,
+  per-attempt requests, throttled chunks, tool start/end, the worker count
+  during `dispatch`, blocked/unblocked from the pending question or plan
+  review, attributed transient and stall retries, and the final outcome.
+- Worker transient retries are now visible (`agent-runner`), and
+  `model-events` error records carry `errorCategory`.
+
+### Surfaces
+
+- TUI: a Forge `ActivityLine` under the stream in **both** the raw (verbose)
+  and folded display modes, independent of the verbose and reasoning
+  switches. Worker cards replace "thinking..." with the worker's live
+  status and show `[model · effort]`.
+- Headless `--events`: a new `activity` JSONL event on every phase or label
+  change, plus a `heartbeat: true` event every 10s for actors silent for
+  15s or more. Hearth's text renderer ignores it, so chat surfaces aren't
+  spammed.
+- The existing stall watchdog, timeouts and recovery are **unchanged**.
+  Nothing is killed to satisfy the UI.
+
+### Validation
+
+- `tests/activity.test.ts` (27) and `tests/activity-line.test.tsx` (2):
+  phases, the stale-label guarantee, provider vs worker waits, blocked,
+  retry attribution, terminal states, the feed bound, labels, failure
+  classification, the worker bridge, and TUI rendering of a waiting
+  state.
+- Full suite 3185 pass / 14 fail (baseline only). typecheck and lint pass.
+
+**Not covered:** remote-surface (Telegram) approvals pause the watchdog but
+are not reported as `blocked-user`. The Forge `tool-input-start` label is
+tool-name-only in the TUI, because argument-level labels would need the
+streamed arguments; headless has full arguments.
+**LOCAL ACCEPTANCE REQUIRED:** a real long provider silence, and live
+multi-worker runs.

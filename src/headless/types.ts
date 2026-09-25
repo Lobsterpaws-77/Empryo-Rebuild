@@ -77,6 +77,25 @@ export type HeadlessEvent =
     }
   | { type: "session-saved"; sessionId: string }
   | { type: "warning"; message: string }
+  /**
+   * Harness-generated activity (no model tokens): phase transitions for the
+   * Forge and each worker, plus a heartbeat while an actor waits on its
+   * provider. `status` is the ready-to-render one-line description.
+   */
+  | {
+      type: "activity";
+      actor: string;
+      kind: "forge" | "worker";
+      name: string;
+      phase: string;
+      label: string;
+      status: string;
+      lane?: string;
+      model?: string;
+      effort?: string;
+      failure?: string;
+      heartbeat?: boolean;
+    }
   | { type: "error"; error: string }
   | { type: "reasoning"; content: string }
   | {

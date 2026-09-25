@@ -5,6 +5,7 @@ import { z } from "zod";
 import { loadConfig } from "../../config/index.js";
 import { logBackgroundError } from "../../stores/errors.js";
 import type { AgentFeatures, AppConfig } from "../../types/index.js";
+import { installWorkerActivityBridge, reportWorkersQueued } from "../activity/worker-bridge.js";
 import { getWorkspaceCoordinator } from "../coordination/WorkspaceCoordinator.js";
 import { getCwd } from "../cwd.js";
 import { applyLaneEffort, type LaneRoute, resolveLaneRoute } from "../llm/lane-routing.js";
@@ -467,6 +468,7 @@ function normalizeTargetPath(f: string): string {
 }
 
 export function buildSubagentTools(models: SubagentModels) {
+  installWorkerActivityBridge();
   const cacheRef: SharedCacheRef = models.sharedCacheRef ?? {
     current: undefined,
     updateFile() {},
@@ -940,6 +942,7 @@ export function buildSubagentTools(models: SubagentModels) {
             type: "dispatch-start",
             totalAgents: tasks.length,
           });
+          reportWorkersQueued(toolCallId, tasks);
 
           const taskIds = new Set(tasks.map((t) => t.agentId));
           for (const task of tasks) {

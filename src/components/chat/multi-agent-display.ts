@@ -9,6 +9,9 @@ export interface AgentInfo {
   cacheHits?: number;
   modelId?: string;
   tier?: string;
+  /** Routing lane + resolved effort (from agent-start). */
+  lane?: string;
+  effort?: string;
   dependsOn?: string[];
   succeeded?: boolean;
 }
@@ -82,6 +85,8 @@ export function applyMultiAgentEvent(
       state: "running",
       modelId: event.modelId,
       tier: event.tier,
+      lane: event.lane,
+      effort: event.effort,
     });
     return { ...s, totalAgents: total };
   }

@@ -35,6 +35,8 @@ export interface ModelCallEvent {
   cacheRead?: number;
   cacheWrite?: number;
   errorMessage?: string;
+  /** Attributed failure category (see core/activity/failure.ts) */
+  errorCategory?: string;
   /** Routing lane (subagents) — see core/llm/lane-routing.ts */
   lane?: string;
   /** Resolved reasoning effort sent with this call (undefined = provider default) */
