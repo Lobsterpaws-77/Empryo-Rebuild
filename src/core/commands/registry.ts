@@ -646,6 +646,20 @@ const COMMAND_DEFS: CommandDef[] = [
     hidden: () => !isAddonInstalled("neovim"),
   },
   {
+    cmd: "/diagnostics",
+    ic: "gauge",
+    desc: "Export run diagnostics (Markdown + JSON): dispatches, models, efforts, usage, retries, timeline",
+    category: "Settings",
+    tags: ["export", "timeline", "usage", "telemetry", "report"],
+  },
+  {
+    cmd: "/preflight",
+    ic: "check",
+    desc: "Release preflight: exact source identity, clean tree, current evidence",
+    category: "Git",
+    tags: ["release", "evidence", "provenance", "dirty"],
+  },
+  {
     cmd: "/narration",
     ic: "brain",
     desc: "Model progress narration: quiet / normal / verbose",

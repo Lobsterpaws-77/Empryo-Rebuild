@@ -49,6 +49,18 @@ export interface StrictLanePolicy {
   effortViolation?: "reject" | "clamp";
 }
 
+/** Release preflight policy (see core/provenance/preflight.ts). */
+export interface ReleasePolicy {
+  /** Refuse a release candidate with uncommitted/untracked changes. Default: true */
+  requireClean?: boolean;
+  /** Require a tag on HEAD. Default: false */
+  requireTag?: boolean;
+  /** Evidence that must have PASSED on this exact candidate. Default: typecheck, test */
+  requiredEvidence?: Array<"build" | "test" | "typecheck" | "lint" | "review" | "acceptance">;
+  /** Require HEAD to match this commit (prefix). */
+  expectedCommit?: string;
+}
+
 /** Opt-in strict routing. Off unless `enabled` is true. */
 export interface StrictRoutingPolicy {
   enabled?: boolean;
@@ -404,6 +416,8 @@ export interface AppConfig {
    * activity, reasoning display and verbose tool output.
    */
   narration?: "quiet" | "normal" | "verbose";
+  /** Release preflight policy for this project (`/preflight`, `--preflight`). */
+  release?: ReleasePolicy;
   /** Diff display style: "default" | "sidebyside" | "compact". Default: "default" */
   diffStyle?: "default" | "sidebyside" | "compact";
   /** Auto-compact diffs after streaming ends (Ctrl+O to expand). Default: false */

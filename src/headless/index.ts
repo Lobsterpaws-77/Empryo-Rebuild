@@ -3,8 +3,9 @@ import { getCwd } from "../core/cwd.js";
 import { getProviderSecretEntries, registerCustomProviders } from "../core/llm/providers/index.js";
 import { registerProviderSecrets } from "../core/secrets.js";
 import { applyCwd } from "../core/utils/resolve-cwd.js";
+import { versionLabel } from "../core/version.js";
 import type { AppConfig } from "../types/index.js";
-import { VERSION } from "./constants.js";
+import { EXIT_ERROR, EXIT_OK, VERSION } from "./constants.js";
 import { listModels, listProviders, setKey } from "./providers.js";
 import { runChat, runPrompt } from "./run.js";
 import type { HeadlessAction } from "./types.js";
@@ -29,14 +30,20 @@ async function initConfig(): Promise<AppConfig> {
 
 export async function runHeadless(action: HeadlessAction): Promise<void> {
   if (action.type === "version") {
-    process.stdout.write(`soulforge ${VERSION}\n`);
+    process.stdout.write(`soulforge ${versionLabel(VERSION)}\n`);
     return;
   }
 
   // Apply --cwd before config / repo map / tools read process.cwd(). When
   // launched via boot.tsx this is already done; idempotent re-apply covers
   // direct entry (tests, daemon-embedded chat).
-  applyCwd(action.type === "run" || action.type === "chat" ? action.opts.cwd : undefined);
+  applyCwd(
+    action.type === "run" || action.type === "chat"
+      ? action.opts.cwd
+      : action.type === "preflight"
+        ? action.cwd
+        : undefined,
+  );
   const config = await initConfig();
 
   switch (action.type) {
@@ -49,6 +56,15 @@ export async function runHeadless(action: HeadlessAction): Promise<void> {
     case "set-key":
       setKey(action.provider, action.key);
       break;
+    case "preflight": {
+      const { runPreflight, formatPreflightReport } = await import(
+        "../core/provenance/preflight.js"
+      );
+      const report = await runPreflight(process.cwd(), config.release);
+      process.stdout.write(`${formatPreflightReport(report)}\n`);
+      process.exit(report.ok ? EXIT_OK : EXIT_ERROR);
+      break;
+    }
     case "run":
       await runPrompt(action.opts, config);
       break;

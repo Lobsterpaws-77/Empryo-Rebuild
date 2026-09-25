@@ -20,6 +20,8 @@ export interface HeadlessRunOptions {
   include?: string[];
   diff?: boolean;
   render?: boolean;
+  /** Write run diagnostics (Markdown + JSON) to .soulforge/diagnostics/ after the run. */
+  diagnostics?: boolean;
 }
 
 export interface TokenUsage {
@@ -163,4 +165,5 @@ export type HeadlessAction =
   | { type: "list-providers" }
   | { type: "list-models"; provider?: string }
   | { type: "set-key"; provider: string; key: string }
+  | { type: "preflight"; cwd?: string }
   | { type: "version" };

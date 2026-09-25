@@ -1,5 +1,8 @@
 import { logBackgroundError } from "../../stores/errors.js";
+import { getCwd } from "../cwd.js";
 import { CORE_RULES } from "../prompts/families/shared-rules.js";
+import { buildCandidateManifest, readEvidence, recordEvidence } from "../provenance/evidence.js";
+import { getSourceIdentity } from "../provenance/source.js";
 import { projectTool } from "../tools/project.js";
 import type { AgentBus, AgentTask } from "./agent-bus.js";
 import { runAgentTask } from "./agent-runner.js";
@@ -154,6 +157,15 @@ export async function runVerifier(
     checkResults.push("Tests: unavailable");
   }
 
+  // Candidate manifest: the exact source state under review and which
+  // evidence (incl. the checks just run) is current for it.
+  const cwd = getCwd();
+  const identity = await getSourceIdentity(cwd).catch(() => null);
+  const manifest =
+    identity?.isGit === true
+      ? buildCandidateManifest(identity, readEvidence(cwd), editedPaths)
+      : null;
+
   // Step 2: LLM verification via runAgentTask
   const taskContext = tasks
     .map((t) => {
@@ -168,6 +180,7 @@ export async function runVerifier(
     "",
     "--- Automated check results ---",
     checkResults.join("\n"),
+    ...(manifest ? ["", "--- Candidate manifest ---", manifest] : []),
     "",
     "--- Files edited ---",
     editedPaths.map((p) => `- ${p}`).join("\n"),
@@ -202,6 +215,20 @@ export async function runVerifier(
       tasks.length + 1,
       abortSignal,
     );
+    if (identity) {
+      const verdict = parseVerdict(resultText);
+      if (verdict === "PASS" || verdict === "FAIL") {
+        recordEvidence(cwd, identity, {
+          kind: "review",
+          ok: verdict === "PASS",
+          source: "verifier",
+          summary: resultText
+            .split("\n")
+            .find((l) => /VERDICT:/i.test(l))
+            ?.trim(),
+        });
+      }
+    }
     return `\n\n### Verification\n${resultText}`;
   } catch (err) {
     logBackgroundError("verifier", err instanceof Error ? err.message : String(err));

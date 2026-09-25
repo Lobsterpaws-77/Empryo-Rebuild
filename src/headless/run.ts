@@ -23,6 +23,7 @@ import { type NarrationMode, normalizeNarrationMode } from "../core/prompts/narr
 import { SessionManager } from "../core/sessions/manager.js";
 import { onFileEdited } from "../core/tools/file-events.js";
 import { logBackgroundError } from "../stores/errors.js";
+import { recordModelCall } from "../stores/model-events.js";
 import { setActiveSessionId } from "../stores/session.js";
 import type { AppConfig, ChatMessage, ForgeMode, InteractiveCallbacks } from "../types/index.js";
 import { DIM, EXIT_ABORT, EXIT_ERROR, EXIT_OK, EXIT_TIMEOUT, PURPLE, RST } from "./constants.js";
@@ -332,6 +333,8 @@ async function streamTurn(
     showProgress: boolean;
     render?: boolean;
     emit?: (event: HeadlessEvent) => void;
+    /** Forge model id — recorded on per-step model events (for diagnostics). */
+    modelId?: string;
   },
 ): Promise<TurnResult> {
   const emit =
@@ -356,6 +359,7 @@ async function streamTurn(
   reportActivity({ type: "start", actorId: actor, kind: "forge", name: "Forge" });
   let lastChunk = "";
   let lastChunkAt = 0;
+  let stepStartedAt = Date.now();
   const chunk = (kind: "text" | "reasoning") => {
     const now = Date.now();
     if (kind === lastChunk && now - lastChunkAt < 500) return;
@@ -381,6 +385,7 @@ async function streamTurn(
         break;
       }
 
+      if (part.type === "start-step") stepStartedAt = Date.now();
       if (part.type === "start-step" || part.type === "finish-step") {
         lastChunk = "";
         reportActivity({ type: "request", actorId: actor });
@@ -468,6 +473,7 @@ async function streamTurn(
         }
       } else if (part.type === "finish-step") {
         steps++;
+        const stepEndedAt = Date.now();
         const usage = part.usage as {
           inputTokens?: number;
           outputTokens?: number;
@@ -479,6 +485,17 @@ async function streamTurn(
         tokens.input += tokens.lastStepInput;
         tokens.output += tokens.lastStepOutput;
         tokens.cacheRead += tokens.lastStepCacheRead;
+        recordModelCall({
+          modelId: reporting.modelId ?? "unknown",
+          source: "main",
+          startedAt: stepStartedAt,
+          durationMs: Math.max(0, stepEndedAt - stepStartedAt),
+          state: "ok",
+          input: tokens.lastStepInput,
+          output: tokens.lastStepOutput,
+          cacheRead: tokens.lastStepCacheRead,
+          lane: "forge",
+        });
         if (reporting.events) {
           emit({ type: "step", step: steps, tokens: { ...tokens } });
         }
@@ -551,6 +568,12 @@ async function saveSession(
 }
 
 export async function runPrompt(opts: HeadlessRunOptions, merged: AppConfig): Promise<void> {
+  // --diagnostics: record per-call model events for this run so the export
+  // has usage/timing tables (the store is off by default).
+  if (opts.diagnostics) {
+    const { useModelEventsStore } = await import("../stores/model-events.js");
+    useModelEventsStore.getState().setEnabled(true);
+  }
   const isQuiet = opts.quiet === true;
   const isEvents = opts.events === true;
   const showProgress = !opts.json && !isEvents && !isQuiet;
@@ -657,6 +680,7 @@ export async function runPrompt(opts: HeadlessRunOptions, merged: AppConfig): Pr
     maxSteps: opts.maxSteps,
     showProgress,
     render: opts.render,
+    modelId: env.modelId,
   });
 
   // Override exit code for timeout
@@ -681,6 +705,22 @@ export async function runPrompt(opts: HeadlessRunOptions, merged: AppConfig): Pr
       process.stderr.write(
         `${PURPLE()}Resume:${RST} soulforge --headless --session ${shortId} "your next prompt"\n`,
       );
+    }
+  }
+
+  if (opts.diagnostics) {
+    try {
+      const { exportRunDiagnostics, summarizeExport } = await import(
+        "../core/diagnostics/export.js"
+      );
+      const exp = await exportRunDiagnostics(env.cwd);
+      if (isEvents) {
+        writeEvent({ type: "diagnostics", markdown: exp.markdownPath, json: exp.jsonPath });
+      } else if (!isQuiet) {
+        process.stderr.write(`${summarizeExport(exp)}\n`);
+      }
+    } catch (err) {
+      stderrWarn(`diagnostics export failed: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
 
@@ -985,6 +1025,7 @@ export async function runChat(opts: HeadlessChatOptions, merged: AppConfig): Pro
       maxSteps: opts.maxSteps,
       showProgress,
       emit,
+      modelId: env.modelId,
     });
 
     // Even partial output is valuable — save it

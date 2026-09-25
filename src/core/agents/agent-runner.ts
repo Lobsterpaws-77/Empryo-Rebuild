@@ -21,7 +21,9 @@ import {
   busFooter,
   type DoneToolResult,
   extractFinalText,
+  parseWorkerResult,
   truncateAgentText,
+  WORKER_RESULT_FOOTER,
   writeAgentContext,
 } from "./agent-results.js";
 import { codeBase } from "./code.js";
@@ -400,6 +402,10 @@ export async function runAgentTask(
   if (task.returnFormat) {
     enrichedPrompt += `\n\n--- Return format: ${task.returnFormat} ---\n${RETURN_FORMAT_INSTRUCTIONS[task.returnFormat]}`;
   }
+  // Standardized handoff metadata for code workers (de-sloppify keeps its own format).
+  if (task.role === "code" && task.agentId !== "desloppify") {
+    enrichedPrompt += `\n\n${WORKER_RESULT_FOOTER}`;
+  }
 
   // Doppelganger: sparks inherit the parent forge's full conversation —
   // same system prompt, same tools, same messages. No role preamble needed.
@@ -743,6 +749,9 @@ export async function runAgentTask(
         tokenUsage: { input, output, total: input + output },
         cacheHits: cacheRead > 0 ? cacheRead : undefined,
         resultChars: resultText.length,
+        ...(task.role === "code"
+          ? { workerResult: parseWorkerResult(resultText) ?? undefined }
+          : {}),
         modelId: selectedModelId,
         tier: taskTier,
         ...routeFields,

@@ -7,6 +7,59 @@ export interface DoneToolResult {
   archivePath?: string;
 }
 
+/**
+ * Standardized worker handoff metadata, parsed from the RESULT footer code
+ * workers are asked to end with (see WORKER_RESULT_FOOTER). Tolerant: any
+ * missing field is simply absent; no footer → null.
+ */
+export interface WorkerResultMeta {
+  reproduced?: string;
+  changed?: string[];
+  tests?: string;
+  validation?: "pass" | "fail" | "not-run" | string;
+  uncertainty?: string;
+  invariants?: string;
+}
+
+export const WORKER_RESULT_FOOTER = `--- Result footer (required) ---
+End your final report with this block, one line per field ("n/a"/"none" when not applicable):
+RESULT
+reproduced: yes | no | n/a
+changed: <files you changed, comma-separated, or none>
+tests: <what you ran → outcome, or none>
+validation: pass | fail | not-run
+uncertainty: <what remains uncertain, or none>
+invariants: <invariants you checked, or none>`;
+
+const RESULT_FIELDS = ["reproduced", "changed", "tests", "validation", "uncertainty", "invariants"];
+
+export function parseWorkerResult(text: string | null | undefined): WorkerResultMeta | null {
+  if (!text) return null;
+  const idx = text.search(/^\s*\**RESULT\**\s*:?\s*$/m);
+  if (idx < 0) return null;
+  const meta: Record<string, unknown> = {};
+  for (const raw of text.slice(idx).split("\n").slice(1)) {
+    const m = raw.match(/^\s*[-*]?\s*([a-z]+)\s*:\s*(.*)$/i);
+    if (!m) continue;
+    const key = (m[1] ?? "").toLowerCase();
+    const value = (m[2] ?? "").trim();
+    if (!RESULT_FIELDS.includes(key) || !value) continue;
+    if (key === "changed") {
+      meta.changed = /^(none|n\/a)$/i.test(value)
+        ? []
+        : value
+            .split(",")
+            .map((v) => v.trim().replace(/^`|`$/g, ""))
+            .filter(Boolean);
+    } else if (key === "validation") {
+      meta.validation = value.toLowerCase().replace(/\s+/g, "-");
+    } else {
+      meta[key] = value;
+    }
+  }
+  return Object.keys(meta).length > 0 ? (meta as WorkerResultMeta) : null;
+}
+
 export interface DispatchOutput {
   reads: FileReadRecord[];
   filesEdited: string[];

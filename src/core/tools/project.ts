@@ -3,6 +3,12 @@ import { dirname, join } from "node:path";
 import type { ToolResult } from "../../types/index.js";
 import { getCwd } from "../cwd.js";
 import { bunShellArgs, describeShellSpawnError, shellInvocation } from "../platform/index.js";
+import {
+  evidenceKindForProjectAction,
+  recordEvidence,
+  withEvidence,
+} from "../provenance/evidence.js";
+import { getSourceIdentity } from "../provenance/source.js";
 import { compressShellOutputFull } from "./shell-compress.js";
 import { saveTee, truncateWithTee } from "./tee.js";
 import { getToolTimeoutMs } from "./tool-timeout.js";
@@ -804,6 +810,24 @@ export const projectTool = {
     "Actions: check (typecheck+lint+test in parallel), test, build, lint, format, typecheck, run, list. " +
     "Use check after edits for full verification in one call. Fix only the failed step, then re-run just that action.",
   execute: async (args: ProjectArgs): Promise<ToolResult> => {
+    // Provenance: test/typecheck/lint/build results are recorded as evidence
+    // against the exact candidate they ran on (see core/provenance). A fixing
+    // run mutates the source it would vouch for, so it is not evidence.
+    const kind = evidenceKindForProjectAction(args.action);
+    if (!kind || args.fix) return executeProject(args);
+    return withEvidence(
+      getCwd(),
+      kind,
+      "project-tool",
+      args.action,
+      () => executeProject(args),
+      (r) => ({ ok: r.success, summary: r.output.split("\n")[0] }),
+    );
+  },
+};
+
+async function executeProject(args: ProjectArgs): Promise<ToolResult> {
+  {
     const cwd = args.cwd ? join(getCwd(), args.cwd) : getCwd();
 
     if (args.action === "list") {
@@ -915,6 +939,7 @@ export const projectTool = {
         return { success: false, output: "No typecheck, lint, or test commands detected." };
       }
 
+      const identity = await getSourceIdentity(getCwd()).catch(() => null);
       const results = await Promise.all(
         steps.map(async (step) => {
           const { stdout, stderr, exitCode } = await runCommand(step.cmd);
@@ -923,6 +948,19 @@ export const projectTool = {
           return { name: step.name, pass, output };
         }),
       );
+      if (identity) {
+        for (const r of results) {
+          const k = evidenceKindForProjectAction(r.name);
+          if (k) {
+            recordEvidence(getCwd(), identity, {
+              kind: k,
+              ok: r.pass,
+              source: "project-tool",
+              command: `check:${r.name}`,
+            });
+          }
+        }
+      }
 
       const allPass = results.every((r) => r.pass);
       const lines = results.map((r) => {
@@ -1042,8 +1080,8 @@ export const projectTool = {
       const msg = describeShellSpawnError(err, shellInvocation().cmd);
       return { success: false, output: msg, error: msg };
     }
-  },
-};
+  }
+}
 
 /**
  * Run the project's configured formatter on a single file.

@@ -12,6 +12,8 @@ ${BOLD}Usage:${RST}
   soulforge --headless --events <prompt>                 JSONL event stream
   soulforge --headless --model <provider/model> <prompt> Override model
   soulforge --headless --mode <mode> <prompt>            Set mode (default/architect/plan/auto)
+  soulforge --headless --diagnostics <prompt>            Export run diagnostics (MD + JSON) after the run
+  soulforge --preflight [--cwd <dir>]                    Release preflight: source identity + evidence (exit 0/1)
   soulforge --headless --narration <quiet|normal|verbose> Forge progress narration (default: config or quiet)
   soulforge --headless --max-steps <n> <prompt>          Limit agent steps
   soulforge --headless --timeout <ms> <prompt>           Abort after timeout
@@ -45,6 +47,10 @@ ${BOLD}Exit codes:${RST} 0=success, 1=error, 2=timeout, 130=abort
 export async function parseHeadlessArgs(argv: string[]): Promise<HeadlessAction | null> {
   if (argv.includes("--version") || argv.includes("-v")) return { type: "version" };
   if (argv.includes("--list-providers")) return { type: "list-providers" };
+  if (argv.includes("--preflight")) {
+    const i = argv.indexOf("--cwd");
+    return { type: "preflight", cwd: i >= 0 ? argv[i + 1] : undefined };
+  }
 
   if (argv.includes("--list-models")) {
     const idx = argv.indexOf("--list-models");
@@ -79,6 +85,7 @@ export async function parseHeadlessArgs(argv: string[]): Promise<HeadlessAction 
   let modelId: string | undefined;
   let mode: ForgeMode | undefined;
   let narration: NarrationMode | undefined;
+  let diagnostics = false;
   let json = false;
   let events = false;
   let quiet = false;
@@ -118,6 +125,8 @@ export async function parseHeadlessArgs(argv: string[]): Promise<HeadlessAction 
         process.exit(EXIT_ERROR);
       }
       narration = n;
+    } else if (arg === "--diagnostics") {
+      diagnostics = true;
     } else if (arg === "--json") {
       json = true;
     } else if (arg === "--events") {
@@ -196,6 +205,7 @@ export async function parseHeadlessArgs(argv: string[]): Promise<HeadlessAction 
       modelId,
       mode,
       narration,
+      ...(diagnostics ? { diagnostics } : {}),
       json,
       events,
       quiet,

@@ -56,6 +56,8 @@ export interface MultiAgentEvent {
   succeeded?: boolean;
   /** Warning message for complexity or verification issues */
   warning?: string;
+  /** Standardized handoff metadata parsed from a code worker's RESULT footer (agent-done). */
+  workerResult?: import("./agent-results.js").WorkerResultMeta;
 }
 
 export interface AgentStatsEvent {

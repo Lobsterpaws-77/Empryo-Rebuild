@@ -26,6 +26,7 @@ resolveCwdFromArgv(cliArgs);
 const hasCli =
   cliArgs.includes("--headless") ||
   cliArgs.includes("--list-providers") ||
+  cliArgs.includes("--preflight") ||
   cliArgs.includes("--list-models") ||
   cliArgs.includes("--set-key") ||
   cliArgs.includes("--version") ||

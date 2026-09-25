@@ -420,3 +420,95 @@ plus SOULFORGE/TUI ONLY (`/narration` picker).
 
 **LOCAL ACCEPTANCE REQUIRED:** how well live models follow each mode's
 cadence.
+
+## CP7 — provenance, evidence, preflight, dirty builds, worker results, diagnostics
+
+**Classification:** SHARED CORE (`core/provenance/*`, `core/diagnostics/*`,
+project tool, verifier, headless) plus SOULFORGE/TUI ONLY (`/preflight`,
+`/diagnostics`).
+
+### Source identity + evidence (`core/provenance/source.ts`, `evidence.ts`)
+
+- `candidateId` works as follows:
+  - clean tree → the HEAD commit;
+  - dirty tree → `HEAD+sha256(diff vs HEAD, untracked names and contents)`.
+  It is read-only (never writes to the repository or object store).
+  Harness state under `.soulforge/` is excluded, so writing evidence never
+  changes the id.
+- The evidence ledger is `.soulforge/evidence.jsonl` (bounded to 500
+  records). The status of a kind for a candidate is `pass | fail | stale |
+  missing`: evidence is reusable while the candidate is unchanged and
+  stale as soon as it changes.
+- Automatic recording:
+  - `project` test / typecheck / lint / build, and each step of `check`,
+    record evidence against the candidate captured **before** the run
+    starts. (A test found and fixed a race where an edit made during the
+    run leaked into the "before" identity.)
+  - `lint --fix` is not recorded, because it mutates what it would vouch
+    for.
+  - The verifier records `review` evidence for PASS or FAIL.
+- The verifier prompt now includes a compact **candidate manifest**: the
+  exact source state, the files changed in the dispatch, and per-kind
+  evidence status for this candidate.
+
+### Release preflight + dirty-build labelling
+
+- `core/provenance/preflight.ts` checks:
+  - source identity;
+  - a clean tree (default on);
+  - optionally, a tagged HEAD and an expected commit;
+  - that required evidence (default typecheck and test) **passed on this
+    exact candidate**.
+  A dirty or unidentified state is always labelled `DEVELOPMENT BUILD — not
+  a release`. The policy lives in project config under `release`.
+- Entry points are `/preflight` (TUI) and `soulforge --preflight [--cwd
+  dir]` (exits 0 or 1). The result is recorded as `preflight` evidence.
+- `scripts/build.ts` stamps `{commit, dirty, tag, builtAt}` into both build
+  paths and warns when building from a dirty tree. `--version` prints
+  `2.20.25 (abc1234)`, `2.20.25+dev.abc1234.dirty — DEVELOPMENT BUILD, not
+  a release`, or `(running from source)`.
+
+### Standardized worker results
+
+Code workers (except de-sloppify) are asked to end with a `RESULT` block
+(reproduced / changed / tests / validation / uncertainty / invariants).
+`parseWorkerResult()` is tolerant, and `agent-done` events carry
+`workerResult`. This extends the existing free-text contract rather than
+replacing it.
+
+### Operational recipes (existing extension point)
+
+`private-rebuild/recipes/staged-candidate-acceptance/SKILL.md` is a skill
+you drop into `.soulforge/skills/`. It covers: identify the candidate
+first, per-candidate evidence, dirty = development, stop at manual gates
+while preserving the candidate, and no scope escalation ("enable staged"
+never becomes "install to production"). No core machinery was needed.
+
+### Run diagnostics (`core/diagnostics/*`)
+
+- `buildRunDiagnostics()` is pure. It covers:
+  - the run window and source identity;
+  - per-actor dispatches (lane, model, effort, queued and run time, final
+    phase, retries, failure);
+  - usage totals, split into fresh input vs cache-read, and grouped by
+    model, lane and phase;
+  - errors by category, and retries;
+  - timeline: peak and average concurrency, overlap, idle gaps, and
+    **queued-while-capacity-available** time;
+  - user gates, the activity feed, evidence, and the final state.
+  The first version was written by a bounded Sonnet worker. I reviewed and
+  integrated it: its mirrored types were replaced with the real imports,
+  and a still-queued worker case was fixed and tested.
+- `exportRunDiagnostics()` writes `.soulforge/diagnostics/run-<ts>.{md,json}`.
+  Entry points are `/diagnostics` (TUI) and `--headless --diagnostics`,
+  which enables per-call model events for that run. Headless now also
+  records Forge step calls as model events (only when events are enabled).
+
+### Validation
+
+- `tests/provenance.test.ts` (15) uses real temporary git repositories.
+  `tests/run-diagnostics.test.ts` has 20 tests and
+  `tests/diagnostics-export.test.ts` has 2.
+- A regression found and fixed: the headless parser now omits `diagnostics`
+  unless set, so the exact option shape stays unchanged.
+- Full suite 3231 pass / 14 fail (baseline only). typecheck and lint pass.

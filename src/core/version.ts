@@ -21,6 +21,46 @@ const _currentVersion: string = pkgJson.version ?? "0.0.0";
 
 export const CURRENT_VERSION: string = _currentVersion;
 
+// ── Build provenance ─────────────────────────────────────────────────
+// scripts/build.ts stamps the source state; absent when running from source.
+
+declare const __SOULFORGE_BUILD_SOURCE__: string | undefined;
+
+export interface BuildSource {
+  commit: string | null;
+  dirty: boolean;
+  tag: string | null;
+  builtAt: string;
+}
+
+export const BUILD_SOURCE: BuildSource | null = (() => {
+  try {
+    return typeof __SOULFORGE_BUILD_SOURCE__ === "string"
+      ? (JSON.parse(__SOULFORGE_BUILD_SOURCE__) as BuildSource)
+      : null;
+  } catch {
+    return null;
+  }
+})();
+
+/**
+ * Version with provenance, e.g.
+ *   "2.20.25 (482edfb)"                                   clean build
+ *   "2.20.25+dev.482edfb.dirty — DEVELOPMENT BUILD, not a release"
+ *   "2.20.25 (running from source)"
+ */
+export function versionLabel(
+  version: string = CURRENT_VERSION,
+  source: BuildSource | null = BUILD_SOURCE,
+): string {
+  if (!source) return `${version} (running from source)`;
+  const short = source.commit ? source.commit.slice(0, 7) : "unknown";
+  if (source.dirty || !source.commit) {
+    return `${version}+dev.${short}${source.dirty ? ".dirty" : ""} — DEVELOPMENT BUILD, not a release`;
+  }
+  return `${version} (${short}${source.tag ? `, ${source.tag}` : ""})`;
+}
+
 // ── Install method detection ─────────────────────────────────────────
 
 export type InstallMethod = "npm" | "pnpm" | "yarn" | "bun" | "brew" | "binary" | "unknown";

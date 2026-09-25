@@ -20,6 +20,33 @@ import { chmodSync, copyFileSync, cpSync, renameSync, mkdirSync, rmSync } from "
 import { dirname, resolve } from "node:path";
 import pkgJson from "../package.json";
 
+// ── Build provenance (private rebuild) ──
+// Stamp the exact source state into the bundle so `--version` can label
+// dirty or source-ambiguous builds as development builds, never releases.
+function gitOut(args: string[]): string | null {
+  const r = spawnSync({ cmd: ["git", ...args], stdout: "pipe", stderr: "pipe" });
+  return r.exitCode === 0 ? new TextDecoder().decode(r.stdout).trim() : null;
+}
+const BUILD_SOURCE = (() => {
+  const commit = gitOut(["rev-parse", "HEAD"]);
+  const status = gitOut(["status", "--porcelain"]);
+  const tag = gitOut(["tag", "--points-at", "HEAD"])?.split("\n")[0] || null;
+  return {
+    commit,
+    dirty: status === null ? true : status.length > 0,
+    tag,
+    builtAt: new Date().toISOString(),
+  };
+})();
+const BUILD_SOURCE_DEFINE = {
+  __SOULFORGE_BUILD_SOURCE__: JSON.stringify(JSON.stringify(BUILD_SOURCE)),
+};
+if (BUILD_SOURCE.dirty || !BUILD_SOURCE.commit) {
+  console.warn(
+    `⚠ Building from a ${BUILD_SOURCE.commit ? "dirty" : "non-git"} tree — this is a DEVELOPMENT BUILD, not a release.`,
+  );
+}
+
 // Inlined into every native-lookup plugin so the runtime resolution honours
 // %LOCALAPPDATA% on Windows and ~/.soulforge on POSIX. Single source of truth
 // — mirrors src/core/platform/index.ts:configDir() at runtime. Update both
@@ -187,6 +214,7 @@ if (isCompile) {
     external: ["react-devtools-core"],
     naming: "soulforge.[ext]",
     plugins: [reactCompilerPlugin, nativeAddonPlugin, opentuiNativePlugin],
+    define: BUILD_SOURCE_DEFINE,
   });
 
   if (!phase1.success) {
@@ -366,6 +394,7 @@ if (isCompile) {
     outdir: "dist",
     target: "bun",
     naming: "[dir]/index.[ext]",
+    define: BUILD_SOURCE_DEFINE,
     external: [
       "ghostty-opentui",
       "ghostty-opentui/*",

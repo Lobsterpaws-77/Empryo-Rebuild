@@ -761,6 +761,23 @@ function handleNarration(input: string, ctx: CommandContext): void {
   });
 }
 
+async function handleDiagnostics(_input: string, ctx: CommandContext): Promise<void> {
+  const { exportRunDiagnostics, summarizeExport } = await import("../diagnostics/export.js");
+  try {
+    sysMsg(ctx, summarizeExport(await exportRunDiagnostics(ctx.cwd)));
+  } catch (err) {
+    sysMsg(ctx, `Diagnostics export failed: ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
+async function handlePreflight(_input: string, ctx: CommandContext): Promise<void> {
+  const { loadConfig, loadProjectConfig, mergeConfigs } = await import("../../config/index.js");
+  const { formatPreflightReport, runPreflight } = await import("../provenance/preflight.js");
+  const policy = mergeConfigs(loadConfig(), loadProjectConfig(ctx.cwd)).release;
+  const report = await runPreflight(ctx.cwd, policy);
+  sysMsg(ctx, formatPreflightReport(report));
+}
+
 function handleSplit(_input: string, ctx: CommandContext): void {
   const { cycleEditorSplit } = useUIStore.getState();
   cycleEditorSplit();
@@ -1089,6 +1106,8 @@ export function register(map: Map<string, CommandHandler>): void {
   map.set("/instructions", handleInstructions);
   map.set("/diff-style", handleDiffStyle);
   map.set("/narration", handleNarration);
+  map.set("/preflight", handlePreflight as CommandHandler);
+  map.set("/diagnostics", handleDiagnostics as CommandHandler);
   map.set("/editor split", handleSplit);
   map.set("/split", handleSplit); // legacy alias
   map.set("/vim-hints", handleVimHints);
