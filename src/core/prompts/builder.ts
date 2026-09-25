@@ -23,6 +23,7 @@ import {
   GOOGLE_PROMPT,
   OPENAI_PROMPT,
 } from "./families/index.js";
+import { getNarrationInstructions, type NarrationMode } from "./narration.js";
 import { TOOL_GUIDANCE_NO_MAP, TOOL_GUIDANCE_WITH_MAP } from "./shared/index.js";
 
 export type { ModelFamily } from "../llm/provider-options.js";
@@ -60,6 +61,8 @@ export interface PromptBuilderOptions {
   projectInstructions: string | null;
   cwd?: string;
   hasGhCli?: boolean;
+  /** Forge progress narration (quiet = no prompt change). */
+  narration?: NarrationMode;
 }
 
 /**
@@ -127,6 +130,11 @@ export function buildSystemPrompt(opts: PromptBuilderOptions): string {
   parts.push(
     "Skills may be loaded as context at the start of the conversation. Use skills(action: search) to find new ones, or Ctrl+S to browse.",
   );
+
+  // 10. Optional progress narration — last, so it takes precedence over the
+  // family/shared "silent tool loop" rules. Quiet adds nothing.
+  const narration = getNarrationInstructions(opts.narration ?? "quiet");
+  if (narration) parts.push(narration);
 
   return parts.filter(Boolean).join("\n");
 }

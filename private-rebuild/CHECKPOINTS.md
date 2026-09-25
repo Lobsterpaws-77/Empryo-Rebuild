@@ -376,3 +376,47 @@ tool-name-only in the TUI, because argument-level labels would need the
 streamed arguments; headless has full arguments.
 **LOCAL ACCEPTANCE REQUIRED:** a real long provider silence, and live
 multi-worker runs.
+
+## CP6 — optional model-authored narration
+
+**Classification:** SHARED CORE (prompt, context manager, headless flag)
+plus SOULFORGE/TUI ONLY (`/narration` picker).
+
+- `narration: "quiet" | "normal" | "verbose"` is set in config (project or
+  global scope) with the `/narration` picker or `/narration <mode>`. In
+  headless it's set with `--narration <mode>`. The default is `quiet`.
+- **Quiet** is the existing silent tool loop. The system prompt is
+  **byte-identical** to the baseline, so there is no cache churn and no
+  extra tokens.
+- **Normal** gives brief updates at phase changes, findings and surprises
+  (typically 1–4 per turn). **Verbose** gives one line before each
+  significant action and after notable results.
+- Normal and Verbose append one section at the **end** of the Forge system
+  prompt. It explicitly overrides the shared "zero text between tool calls"
+  rule and the OpenAI "suppress preambles" instruction. It also forbids
+  reproducing or paraphrasing hidden reasoning: narration is progress
+  reporting, not chain-of-thought.
+- The long-session persona nudge ("the curse holds…") is replaced by a
+  narration-aware voice check when narration is on, so the two never
+  contradict each other.
+- The mode is part of the instructions cache key. Switching modes rebuilds
+  the prompt once.
+- Narration text is rendered where the TUI already shows interstitial text
+  (folded into the tool rail, or inline in raw mode). It is independent of
+  harness activity (always on, token-free), of `/reasoning` and of
+  `/verbose`, which only affect rendering.
+- Workers are unaffected: narration applies to the Forge only.
+- Context: narration stays in history like any assistant text. No context
+  manipulation was added, per the handoff; this is why quiet stays the
+  default.
+
+### Validation
+
+- `tests/narration.test.ts` (9): quiet is byte-identical; section placement
+  and override text; no-CoT wording; cadence differences; nudge
+  replacement; normalisation; the ContextManager prompt and cache key; the
+  headless flag.
+- Full suite 3194 pass / 14 fail (baseline only). typecheck and lint pass.
+
+**LOCAL ACCEPTANCE REQUIRED:** how well live models follow each mode's
+cadence.

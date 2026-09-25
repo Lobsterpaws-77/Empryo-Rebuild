@@ -1,9 +1,12 @@
+import type { NarrationMode } from "../core/prompts/narration.js";
 import type { ForgeMode, InteractiveCallbacks } from "../types/index.js";
 
 export interface HeadlessRunOptions {
   prompt: string;
   modelId?: string;
   mode?: ForgeMode;
+  /** Forge progress narration override (else config `narration`, else quiet). */
+  narration?: NarrationMode;
   json?: boolean;
   events?: boolean;
   quiet?: boolean;
@@ -121,6 +124,8 @@ export type HeadlessEvent =
 export interface HeadlessChatOptions {
   modelId?: string;
   mode?: ForgeMode;
+  /** Forge progress narration override (else config `narration`, else quiet). */
+  narration?: NarrationMode;
   json?: boolean;
   events?: boolean;
   quiet?: boolean;

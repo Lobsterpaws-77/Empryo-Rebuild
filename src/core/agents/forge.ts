@@ -27,6 +27,7 @@ import {
   supportsTemperature,
 } from "../llm/provider-options.js";
 import { getMCPManager } from "../mcp/index.js";
+import { getNarrationNudge, type NarrationMode } from "../prompts/narration.js";
 import { resolveRetrySettings } from "../retry/settings.js";
 import { isToolAvailable } from "../tools/constants.js";
 import {
@@ -103,6 +104,7 @@ function buildForgePrepareStep(
     buildMemoryRecallMessages(
       lastUserMessage: string,
     ): Promise<[{ role: "user"; content: string }, { role: "assistant"; content: string }] | null>;
+    getNarrationMode?(): NarrationMode;
   },
   tabId?: string,
   codeExecution?: boolean,
@@ -419,7 +421,11 @@ function buildForgePrepareStep(
       stepNumber >= PERSONA_NUDGE_START &&
       (stepNumber - PERSONA_NUDGE_START) % PERSONA_NUDGE_INTERVAL === 0
     ) {
-      hints.push(PERSONA_NUDGE);
+      // With narration on, the silence nudge would contradict the user's
+      // chosen mode — use the narration-aware voice check instead.
+      hints.push(
+        getNarrationNudge(contextManager?.getNarrationMode?.() ?? "quiet") ?? PERSONA_NUDGE,
+      );
     }
 
     // Assemble tail content: diffs + hints + steering.

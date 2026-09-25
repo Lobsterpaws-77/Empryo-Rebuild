@@ -3,6 +3,7 @@ import { loadConfig } from "../../config/index.js";
 import { useUIStore } from "../../stores/ui.js";
 import type { AgentFeatures, AppConfig } from "../../types/index.js";
 import { icon, setNerdFont } from "../icons.js";
+import { NARRATION_MODES, normalizeNarrationMode } from "../prompts/narration.js";
 import { applyTheme, getThemeTokens, listThemes, useThemeStore } from "../theme/index.js";
 import type { CommandContext, CommandHandler } from "./types.js";
 import { sysMsg } from "./utils.js";
@@ -708,6 +709,58 @@ function handleDiffStyle(_input: string, ctx: CommandContext): void {
   });
 }
 
+function handleNarration(input: string, ctx: CommandContext): void {
+  const patch = (v: string) => ({ narration: normalizeNarrationMode(v) });
+  // `/narration normal` sets it directly (project scope, like the picker default).
+  const direct = input.trim().split(/\s+/)[1];
+  if (direct) {
+    if (!(NARRATION_MODES as readonly string[]).includes(direct)) {
+      sysMsg(ctx, `Unknown narration mode "${direct}". Use: ${NARRATION_MODES.join(", ")}`);
+      return;
+    }
+    const scope = ctx.detectScope("narration");
+    ctx.saveToScope(patch(direct), scope);
+    sysMsg(ctx, `Narration: ${direct} (${scope}) — applies from the next turn`);
+    return;
+  }
+  ctx.openCommandPicker({
+    title: "Narration",
+    icon: icon("brain"),
+    scopeEnabled: true,
+    initialScope: ctx.detectScope("narration"),
+    options: [
+      {
+        value: "quiet",
+        label: "Quiet",
+        description: "Silent tool loop, one final answer (default, fewest tokens)",
+        icon: icon("check"),
+      },
+      {
+        value: "normal",
+        label: "Normal",
+        description: "Brief model updates at phase changes and findings",
+        icon: icon("brain"),
+      },
+      {
+        value: "verbose",
+        label: "Verbose",
+        description: "Running commentary before significant actions (more tokens)",
+        icon: icon("brain"),
+      },
+    ],
+    currentValue: ctx.narration,
+    onSelect: (value, scope) => {
+      ctx.saveToScope(patch(value), scope ?? "project");
+      sysMsg(
+        ctx,
+        `Narration: ${value} (${scope ?? "project"}) — applies from the next turn. ` +
+          "Harness activity lines stay on in every mode.",
+      );
+    },
+    onScopeMove: (value, from, to) => ctx.saveToScope(patch(value), to, from),
+  });
+}
+
 function handleSplit(_input: string, ctx: CommandContext): void {
   const { cycleEditorSplit } = useUIStore.getState();
   cycleEditorSplit();
@@ -783,6 +836,7 @@ const settingsHandlers: Record<string, (input: string, ctx: CommandContext) => v
   "verbose-tab": handleVerboseTab,
   compaction: handleCompaction,
   "diff-style": handleDiffStyle,
+  narration: handleNarration,
   "agent-features": handleAgentFeatures,
   instructions: handleInstructions as CommandHandler,
   "nvim-config": handleNvimConfig,
@@ -1034,6 +1088,7 @@ export function register(map: Map<string, CommandHandler>): void {
   map.set("/agent-features", handleAgentFeatures);
   map.set("/instructions", handleInstructions);
   map.set("/diff-style", handleDiffStyle);
+  map.set("/narration", handleNarration);
   map.set("/editor split", handleSplit);
   map.set("/split", handleSplit); // legacy alias
   map.set("/vim-hints", handleVimHints);

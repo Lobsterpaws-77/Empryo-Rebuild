@@ -397,6 +397,13 @@ export interface AppConfig {
   editorSplit?: number;
   /** Show verbose tool output (plan updates, etc.) in chat. Default: false */
   verbose?: boolean;
+  /**
+   * Model-authored progress narration for the Forge: "quiet" (default,
+   * silent tool loop), "normal" (updates at meaningful moments), "verbose"
+   * (running commentary). Costs output tokens; separate from harness
+   * activity, reasoning display and verbose tool output.
+   */
+  narration?: "quiet" | "normal" | "verbose";
   /** Diff display style: "default" | "sidebyside" | "compact". Default: "default" */
   diffStyle?: "default" | "sidebyside" | "compact";
   /** Auto-compact diffs after streaming ends (Ctrl+O to expand). Default: false */

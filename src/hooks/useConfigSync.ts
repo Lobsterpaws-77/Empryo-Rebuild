@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import type { ContextManager } from "../core/context/manager.js";
 import { setSyncEditorOnEdit } from "../core/editor/instance.js";
+import { normalizeNarrationMode } from "../core/prompts/narration.js";
 import { applyTheme } from "../core/theme/index.js";
 import { useUIStore } from "../stores/ui.js";
 import type { AppConfig } from "../types/index.js";
@@ -51,6 +52,10 @@ export function useConfigSync({
   useEffect(() => {
     contextManager.setTaskRouter(effectiveConfig.taskRouter);
   }, [effectiveConfig.taskRouter, contextManager]);
+
+  useEffect(() => {
+    contextManager.setNarrationMode(normalizeNarrationMode(effectiveConfig.narration));
+  }, [effectiveConfig.narration, contextManager]);
 
   useEffect(() => {
     import("../core/instructions.js").then(({ loadInstructions, buildInstructionPrompt }) => {

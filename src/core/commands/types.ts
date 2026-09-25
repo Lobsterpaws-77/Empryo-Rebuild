@@ -44,6 +44,8 @@ export interface CommandContext {
   tabVerbose: boolean;
   setTabVerbose: (v: boolean) => void;
   diffStyle: "default" | "sidebyside" | "compact";
+  /** Forge progress narration mode (effective config). */
+  narration: "quiet" | "normal" | "verbose";
   collapseDiffs: boolean;
   compactionStrategy: CompactionStrategy;
   showReasoning: boolean;

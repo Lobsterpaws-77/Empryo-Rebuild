@@ -9,6 +9,7 @@ import { getWorkspaceCoordinator } from "../../core/coordination/WorkspaceCoordi
 import { icon } from "../../core/icons.js";
 import { buildInstructionPrompt, loadInstructions } from "../../core/instructions.js";
 import type { ProviderStatus } from "../../core/llm/provider.js";
+import { normalizeNarrationMode } from "../../core/prompts/narration.js";
 import { clearTabSessionPatterns } from "../../core/security/forbidden.js";
 import type { SessionManager } from "../../core/sessions/manager.js";
 import type { PrerequisiteStatus } from "../../core/setup/prerequisites.js";
@@ -188,6 +189,10 @@ export const TabInstance = memo(function TabInstance({
   useEffect(() => {
     contextManager.setTaskRouter(effectiveConfig.taskRouter);
   }, [effectiveConfig.taskRouter, contextManager]);
+
+  useEffect(() => {
+    contextManager.setNarrationMode(normalizeNarrationMode(effectiveConfig.narration));
+  }, [effectiveConfig.narration, contextManager]);
 
   useEffect(() => {
     const loaded = loadInstructions(cwd, effectiveConfig.instructionFiles);

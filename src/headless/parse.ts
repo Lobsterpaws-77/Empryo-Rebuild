@@ -1,4 +1,5 @@
 import { getAllProviders } from "../core/llm/providers/index.js";
+import { NARRATION_MODES, type NarrationMode } from "../core/prompts/narration.js";
 import type { ForgeMode } from "../types/index.js";
 import { BOLD, EXIT_ERROR, EXIT_OK, RED, RST, VALID_MODES } from "./constants.js";
 import type { HeadlessAction } from "./types.js";
@@ -11,6 +12,7 @@ ${BOLD}Usage:${RST}
   soulforge --headless --events <prompt>                 JSONL event stream
   soulforge --headless --model <provider/model> <prompt> Override model
   soulforge --headless --mode <mode> <prompt>            Set mode (default/architect/plan/auto)
+  soulforge --headless --narration <quiet|normal|verbose> Forge progress narration (default: config or quiet)
   soulforge --headless --max-steps <n> <prompt>          Limit agent steps
   soulforge --headless --timeout <ms> <prompt>           Abort after timeout
   soulforge --headless --quiet <prompt>                  Suppress header/footer
@@ -76,6 +78,7 @@ export async function parseHeadlessArgs(argv: string[]): Promise<HeadlessAction 
 
   let modelId: string | undefined;
   let mode: ForgeMode | undefined;
+  let narration: NarrationMode | undefined;
   let json = false;
   let events = false;
   let quiet = false;
@@ -107,6 +110,14 @@ export async function parseHeadlessArgs(argv: string[]): Promise<HeadlessAction 
         process.exit(EXIT_ERROR);
       }
       mode = m;
+    } else if (arg === "--narration" && argv[i + 1]) {
+      const n = argv[++i] as NarrationMode;
+      if (!NARRATION_MODES.includes(n)) {
+        process.stderr.write(`${RED()}Error:${RST} Unknown narration mode "${n}"\n`);
+        process.stderr.write(`Valid: ${NARRATION_MODES.join(", ")}\n`);
+        process.exit(EXIT_ERROR);
+      }
+      narration = n;
     } else if (arg === "--json") {
       json = true;
     } else if (arg === "--events") {
@@ -152,6 +163,7 @@ export async function parseHeadlessArgs(argv: string[]): Promise<HeadlessAction 
       opts: {
         modelId,
         mode,
+        narration,
         json,
         events,
         quiet,
@@ -183,6 +195,7 @@ export async function parseHeadlessArgs(argv: string[]): Promise<HeadlessAction 
       prompt,
       modelId,
       mode,
+      narration,
       json,
       events,
       quiet,

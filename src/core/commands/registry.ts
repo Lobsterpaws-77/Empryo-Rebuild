@@ -646,6 +646,13 @@ const COMMAND_DEFS: CommandDef[] = [
     hidden: () => !isAddonInstalled("neovim"),
   },
   {
+    cmd: "/narration",
+    ic: "brain",
+    desc: "Model progress narration: quiet / normal / verbose",
+    category: "Settings",
+    tags: ["progress", "updates", "commentary"],
+  },
+  {
     cmd: "/reasoning",
     ic: "brain",
     desc: "Show or hide reasoning content",

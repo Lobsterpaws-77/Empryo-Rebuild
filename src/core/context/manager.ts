@@ -30,6 +30,7 @@ import {
   invalidateDirectoryTree,
   type PromptBuilderOptions,
 } from "../prompts/index.js";
+import type { NarrationMode } from "../prompts/narration.js";
 // buildForbiddenContext removed from system prompt — gates enforce at tool level
 import { emitFileEdited, onFileEdited, onFileRead } from "../tools/file-events.js";
 import { IntelligenceClient } from "../workers/intelligence-client.js";
@@ -76,6 +77,7 @@ export class ContextManager {
   /** Memory ids surfaced earlier in this turn-stream — skipped on subsequent recall to avoid duplicate <recalled_memories> blocks. Cleared on cache reset (compaction, /clear, session restore). */
   private surfacedMemoryIds = new Set<string>();
   private forgeMode: ForgeMode = "default";
+  private narrationMode: NarrationMode = "quiet";
   private editorFile: string | null = null;
   private editorOpen = false;
   private editorIntegration: EditorIntegration | null = null;
@@ -475,6 +477,15 @@ export class ContextManager {
     this.forgeMode = mode;
   }
 
+  getNarrationMode(): NarrationMode {
+    return this.narrationMode;
+  }
+
+  /** Forge progress narration (see core/prompts/narration.ts). */
+  setNarrationMode(mode: NarrationMode): void {
+    this.narrationMode = mode;
+  }
+
   setContextWindow(tokens: number): void {
     this.contextWindowTokens = tokens;
   }
@@ -747,7 +758,7 @@ export class ContextManager {
     const skillNames = [...this.skills.keys()].sort().join(",");
     const memGen = this.memoryManager.generation;
     const mode = this.forgeMode;
-    return `${String(gen)}|${modelId}|${mode}|${String(skillCount)}:${skillNames}|m${String(memGen)}|pi${String(this.projectInstructionsVersion)}`;
+    return `${String(gen)}|${modelId}|${mode}|n${this.narrationMode}|${String(skillCount)}:${skillNames}|m${String(memGen)}|pi${String(this.projectInstructionsVersion)}`;
   }
 
   waitForRepoMap(timeoutMs = 120_000, signal?: AbortSignal): Promise<boolean> {
@@ -1354,6 +1365,7 @@ export class ContextManager {
       projectInstructions: this.projectInstructions || null,
       cwd: this.cwd,
       hasGhCli: this.hasGhCli,
+      narration: this.narrationMode,
     };
     return buildPrompt(opts);
   }

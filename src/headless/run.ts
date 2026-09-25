@@ -19,6 +19,7 @@ import { buildProviderOptions } from "../core/llm/provider-options.js";
 import { StrictRoutingError } from "../core/llm/strict-routing.js";
 import { buildSubagentRouting, withLaneProviderOptions } from "../core/llm/subagent-routing.js";
 import { disposeMCPManager } from "../core/mcp/index.js";
+import { type NarrationMode, normalizeNarrationMode } from "../core/prompts/narration.js";
 import { SessionManager } from "../core/sessions/manager.js";
 import { onFileEdited } from "../core/tools/file-events.js";
 import { logBackgroundError } from "../stores/errors.js";
@@ -70,6 +71,7 @@ async function setupAgent(
     cwd?: string;
     modelId?: string;
     mode?: ForgeMode;
+    narration?: NarrationMode;
     noRepomap?: boolean;
     system?: string;
     quiet?: boolean;
@@ -162,6 +164,7 @@ async function setupAgent(
   contextManager.setProjectInstructions(instructionText);
 
   if (mode !== "default") contextManager.setForgeMode(mode);
+  contextManager.setNarrationMode(opts.narration ?? normalizeNarrationMode(merged.narration));
 
   try {
     const { warmupIntelligence } = await import("../core/intelligence/index.js");
