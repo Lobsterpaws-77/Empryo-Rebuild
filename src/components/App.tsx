@@ -19,6 +19,11 @@ import { setEditorRequestCallback } from "../core/editor/instance.js";
 import { icon, providerIcon, UI_ICONS } from "../core/icons.js";
 import { runIntelligenceHealthCheck } from "../core/intelligence/index.js";
 import {
+  cycleLaneEffort,
+  getLaneEffortSetting,
+  resolveRoutingTable,
+} from "../core/llm/lane-routing.js";
+import {
   fetchGroupedModels,
   fetchOpenRouterMetadata,
   fetchProviderModels,
@@ -1169,6 +1174,12 @@ export function App({
   }, []);
 
   const [activeModelForHeader, setActiveModelForHeader] = useState(effectiveConfig.defaultModel);
+  // Same resolver the dispatch path uses — the /router view shows exactly
+  // the model + effort each lane will run with, and where each came from.
+  const routerRoutes = useMemo(
+    () => resolveRoutingTable(effectiveConfig, activeModelForHeader),
+    [effectiveConfig, activeModelForHeader],
+  );
   const activeChatRef = useRef<ChatInstance | null>(null);
   // biome-ignore lint/correctness/useExhaustiveDependencies: derived from activeTabId — stable trigger
   useEffect(() => {
@@ -1951,6 +1962,15 @@ export function App({
           const current = effectiveConfig.taskRouter ?? DEFAULT_TASK_ROUTER;
           const updated = { ...current, [slot]: null };
           saveToScope({ taskRouter: updated }, routerScope);
+        }}
+        routes={routerRoutes}
+        onCycleEffort={(lane, dir) => {
+          const current = effectiveConfig.taskRouter ?? DEFAULT_TASK_ROUTER;
+          const next = cycleLaneEffort(getLaneEffortSetting(current, lane), dir);
+          const effort = { ...(current.effort ?? {}) };
+          if (next === undefined) delete effort[lane];
+          else effort[lane] = next;
+          saveToScope({ taskRouter: { ...current, effort } }, routerScope);
         }}
         onPickerChange={(key, value) => {
           const current = effectiveConfig.taskRouter ?? DEFAULT_TASK_ROUTER;

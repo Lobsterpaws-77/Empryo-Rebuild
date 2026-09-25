@@ -213,6 +213,7 @@ describe("resolveLaneRoute — acceptance matrix", () => {
   test("routing table covers every lane and formats readably", () => {
     const rows = resolveRoutingTable({ performance: { effort: "high" } }, PARENT);
     expect(rows.map((r) => r.lane)).toEqual([
+      "forge",
       "default",
       "spark",
       "ember",

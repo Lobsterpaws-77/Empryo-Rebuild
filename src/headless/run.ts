@@ -8,7 +8,8 @@ import { ContextManager } from "../core/context/manager.js";
 import { getCwd } from "../core/cwd.js";
 import { resolveModel } from "../core/llm/provider.js";
 import { buildProviderOptions } from "../core/llm/provider-options.js";
-import { buildSubagentRouting } from "../core/llm/subagent-routing.js";
+import { StrictRoutingError } from "../core/llm/strict-routing.js";
+import { buildSubagentRouting, withLaneProviderOptions } from "../core/llm/subagent-routing.js";
 import { disposeMCPManager } from "../core/mcp/index.js";
 import { SessionManager } from "../core/sessions/manager.js";
 import { onFileEdited } from "../core/tools/file-events.js";
@@ -172,8 +173,16 @@ async function setupAgent(
       `${lane} model "${id}" failed to resolve: ${err instanceof Error ? err.message : String(err)}`,
     );
   });
+  // Strict routing (opt-in): refuse to start when the Forge itself violates
+  // its lane policy; report other constrained lanes (refused at dispatch).
+  const forgeViolation = routing.strict.violations.find((v) => v.lane === "forge");
+  if (forgeViolation) throw new StrictRoutingError(forgeViolation);
+  for (const v of routing.strict.violations) process.stderr.write(`${DIM}  ✗ ${v.message}${RST}\n`);
+  for (const n of routing.strict.notes) process.stderr.write(`${DIM}  ↳ ${n}${RST}\n`);
   const subagentModels = routing.subagentModels;
-  const webSearchModel = webSearchEnabled ? routing.webSearchModel : undefined;
+  const webSearchModel = webSearchEnabled
+    ? await withLaneProviderOptions(routing.webSearchModel, routing.webSearchRoute, merged)
+    : undefined;
 
   // Shared file cache so dispatch subagents and multi-turn chat see edits made
   // earlier in the session (parity with useChat's sharedCacheRef).

@@ -3,6 +3,7 @@ import { type LanguageModel, RetryError } from "ai";
 import { logBackgroundError } from "../../stores/errors.js";
 import type { TaskTier } from "../../types/index.js";
 import { getActiveProviderId } from "../llm/provider.js";
+import { enforceStrictRoute, StrictRoutingError } from "../llm/strict-routing.js";
 import { getSurfacedHintIds, runInSubagentScope } from "../memory/hints.js";
 import { bounceProxy, proxyHealthProbe } from "../proxy/lifecycle.js";
 import { taskListTool } from "../tools/task-list.js";
@@ -86,6 +87,8 @@ const RETURN_FORMAT_INSTRUCTIONS: Record<import("./agent-bus.js").ReturnFormat, 
 
 function isRetryable(error: unknown, abortSignal?: AbortSignal): boolean {
   if (error instanceof DependencyFailedError) return false;
+  // Policy rejection — retrying would only repeat it.
+  if (error instanceof StrictRoutingError) return false;
   // User-initiated abort (parent dispatch cancelled) — don't retry
   if (abortSignal?.aborted) return false;
   // AI SDK wraps retried failures in RetryError — always retry at our level too
@@ -305,7 +308,12 @@ export async function runAgentTask(
     typeof selectedModel === "object" && "modelId" in selectedModel
       ? String(selectedModel.modelId)
       : "unknown";
-  const route = resolveTaskRoute(task, models, models.routingConfig ?? loadConfig());
+  const routingConfig = models.routingConfig ?? loadConfig();
+  const rawRoute = resolveTaskRoute(task, models, routingConfig);
+  // Report the route actually used (strict clamping applied). A strict
+  // violation is raised by createAgent below and surfaces as agent-error.
+  const strictOutcome = enforceStrictRoute(rawRoute, routingConfig.taskRouter);
+  const route = strictOutcome.ok ? strictOutcome.route : rawRoute;
   const routeFields = {
     lane: route.lane,
     effort: route.effort,

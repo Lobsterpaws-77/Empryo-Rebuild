@@ -1,5 +1,11 @@
 import { useKeyboard, useTerminalDimensions } from "@opentui/react";
 import { useMemo, useState } from "react";
+import {
+  describeEffortSource,
+  describeModelSource,
+  getLanePolicy,
+  type LaneRoute,
+} from "../../core/llm/lane-routing.js";
 import { useTheme } from "../../core/theme/index.js";
 import type { TaskRouter } from "../../types/index.js";
 import type { ConfigScope } from "../layout/shared.js";
@@ -145,6 +151,10 @@ interface Props {
   onScopeChange: (toScope: ConfigScope, fromScope: ConfigScope) => void;
   onPickSlot: (slot: keyof TaskRouter) => void;
   onClearSlot: (slot: keyof TaskRouter) => void;
+  /** Resolved route per lane (model + effort + sources) from the effective config. */
+  routes?: LaneRoute[];
+  /** Cycle the lane's explicit effort: inherit → off → low → … → max → inherit. */
+  onCycleEffort?: (lane: string, dir: 1 | -1) => void;
   onPickerChange: (key: "maxConcurrentAgents", value: number) => void;
   /** Add a fallback model to a specific model's fallback chain */
   onAddFallback: (modelId: string) => void;
@@ -163,6 +173,8 @@ export function RouterSettings({
   onScopeChange,
   onPickSlot,
   onClearSlot,
+  routes,
+  onCycleEffort,
   onPickerChange,
   onAddFallback,
   onClearFallbacks,
@@ -270,6 +282,12 @@ export function RouterSettings({
       else if (selectedSlot) onPickSlot(selectedSlot.key);
       return;
     }
+    if (evt.name === "e" && selectedSlot && onCycleEffort) {
+      if (getLanePolicy(selectedSlot.key)?.effortConfigurable) {
+        onCycleEffort(selectedSlot.key, evt.shift ? -1 : 1);
+      }
+      return;
+    }
     if (evt.name === "d" || evt.name === "delete" || evt.name === "backspace") {
       if (selectedFallbackModelId) onClearFallbacks(selectedFallbackModelId);
       else if (selectedSlot) onClearSlot(selectedSlot.key);
@@ -303,15 +321,20 @@ export function RouterSettings({
 
   if (!visible) return null;
 
+  const routeByLane = new Map((routes ?? []).map((r) => [r.lane, r]));
+  const strictOn = router?.strict?.enabled === true;
+  const selectedRoute = selectedSlot ? routeByLane.get(selectedSlot.key) : undefined;
+
   const customCount = ALL_DEFS.filter(
     (d) => d.kind === "slot" && typeof router?.[d.key] === "string",
   ).length;
   const slotCount = ALL_DEFS.filter((d) => d.kind === "slot").length;
 
-  // Columns: marker(2) + label + description + model (right)
+  // Columns: marker(2) + label + description + model + effort (right)
   const labelCol = 12;
+  const effortCol = 9;
   const modelCol = Math.min(30, Math.max(18, Math.floor(contentW * 0.32)));
-  const descCol = Math.max(8, contentW - 4 - labelCol - modelCol - 2);
+  const descCol = Math.max(8, contentW - 4 - labelCol - modelCol - effortCol - 2);
 
   // Strip well-known provider prefix to keep model column compact.
   const shortModel = (m: string): string => {
@@ -326,11 +349,12 @@ export function RouterSettings({
       height={popupH}
       title="Task Router"
       titleIcon="router"
-      blurb={`${customCount}/${slotCount} set · ${scope} · default: ${shortModel(activeModel)}`}
+      blurb={`${customCount}/${slotCount} set · ${scope}${strictOn ? " · strict" : ""} · default: ${shortModel(activeModel)}`}
       footerHints={[
         { key: "↑↓", label: "nav" },
         { key: "Enter", label: "set" },
         { key: "d", label: "reset" },
+        { key: "e", label: "effort" },
         { key: "←→", label: selectedPicker ? "adjust" : "scope" },
         { key: "Esc", label: "close" },
       ]}
@@ -416,6 +440,20 @@ export function RouterSettings({
             const rowBg = isSelected ? t.bgPopupHighlight : t.bgPopup;
             const raw = router?.[row.def.key] ?? null;
             const modelId = typeof raw === "string" ? raw : null;
+            const route = routeByLane.get(row.def.key);
+            const policy = getLanePolicy(row.def.key);
+            const strictLane = strictOn && !!router?.strict?.lanes?.[row.def.key];
+            // Explicit values render in the accent colour; inherited/fallback
+            // values render dim with a ↳ so the source is always visible.
+            const inheritedModel =
+              !modelId && route?.modelId ? `↳ ${shortModel(route.modelId)}` : null;
+            const effortExplicit =
+              route && (route.effortSource === "lane" || route.effortSource === "override");
+            const effortText = !policy?.effortConfigurable
+              ? ""
+              : route?.effort
+                ? `${effortExplicit ? "" : "↳"}${route.effort}`
+                : "↳auto";
             const descFg = isSelected ? t.textSecondary : t.textMuted;
             const label = row.def.label.padEnd(labelCol).slice(0, labelCol);
             const desc = truncate(row.def.hint, descCol).padEnd(descCol).slice(0, descCol);
@@ -434,7 +472,9 @@ export function RouterSettings({
                   {label}
                 </text>
                 <text bg={rowBg} fg={descFg}>
-                  {desc}
+                  {strictLane
+                    ? truncate(`${row.def.hint} · strict`, descCol).padEnd(descCol)
+                    : desc}
                 </text>
                 <box flexGrow={1} backgroundColor={rowBg} />
                 {modelId ? (
@@ -443,15 +483,30 @@ export function RouterSettings({
                   </text>
                 ) : (
                   <text bg={rowBg} fg={t.textDim}>
-                    —
+                    {inheritedModel ? truncate(inheritedModel, modelCol) : "—"}
                   </text>
                 )}
+                <text
+                  bg={rowBg}
+                  fg={effortExplicit ? t.brandAlt : t.textDim}
+                  attributes={effortExplicit ? BOLD : 0}
+                >
+                  {` ${effortText}`.padStart(effortCol).slice(0, effortCol)}
+                </text>
                 <text bg={rowBg}>{"  "}</text>
               </box>
             );
           })}
         </box>
         <VSpacer />
+        <text bg={t.bgPopup} fg={t.textMuted}>
+          {selectedRoute
+            ? truncate(
+                `${selectedRoute.lane}: model ${describeModelSource(selectedRoute)} · effort ${describeEffortSource(selectedRoute)}`,
+                contentW,
+              )
+            : " "}
+        </text>
         <SegmentedControl
           label="Scope"
           labelWidth={14}

@@ -42,6 +42,7 @@ export const LANE_EFFORT_VALUES: readonly LaneEffort[] = [
 ];
 
 export type BuiltinLane =
+  | "forge"
   | "default"
   | "spark"
   | "ember"
@@ -69,7 +70,9 @@ export type LaneEffortFallback =
    * Use a fixed built-in effort, but only when a global effort is configured
    * (otherwise nothing is sent, matching historical behaviour).
    */
-  | { kind: "builtin"; effort: LaneEffort };
+  | { kind: "builtin"; effort: LaneEffort }
+  /** Send no effort unless the lane (or a dispatch) sets one — provider default. */
+  | { kind: "none" };
 
 export interface LanePolicy {
   id: string;
@@ -83,6 +86,17 @@ export interface LanePolicy {
 }
 
 const BUILTIN_POLICIES: Record<BuiltinLane, LanePolicy> = {
+  // The main conversation. Its model is the active model (Ctrl+L / /model)
+  // and its effort is the global `performance.effort`; listed so strict
+  // routing and the routing table can cover it.
+  forge: {
+    id: "forge",
+    label: "Forge",
+    modelKeys: [],
+    modelFallback: "parent",
+    effortFallback: { kind: "global" },
+    effortConfigurable: false,
+  },
   default: {
     id: "default",
     label: "Default",
@@ -114,7 +128,8 @@ const BUILTIN_POLICIES: Record<BuiltinLane, LanePolicy> = {
     label: "Web Search",
     modelKeys: ["webSearch"],
     modelFallback: "none",
-    effortFallback: { kind: "global" },
+    // Historically the web-search agent sent no reasoning options at all.
+    effortFallback: { kind: "none" },
     effortConfigurable: true,
   },
   desloppify: {
@@ -185,7 +200,14 @@ export type LaneModelSource =
   | "parent"
   | "disabled";
 
-export type LaneEffortSource = "override" | "lane" | "builtin" | "global" | "unset";
+export type LaneEffortSource =
+  | "override"
+  | "lane"
+  | "builtin"
+  | "global"
+  | "unset"
+  /** Clamped by the strict routing policy (see strict-routing.ts). */
+  | "policy";
 
 /**
  * How a resolved effort reaches the provider for this model:
@@ -302,6 +324,9 @@ export function resolveLaneRoute(
   ) {
     effort = policy.effortFallback.effort;
     effortSource = "builtin";
+  } else if (policy.effortFallback.kind === "none") {
+    effort = undefined;
+    effortSource = "unset";
   } else if (globalEffort !== undefined) {
     effort = globalEffort;
     effortSource = "global";
@@ -391,6 +416,7 @@ const EFFORT_SOURCE_LABEL: Record<LaneEffortSource, string> = {
   override: "dispatch override",
   lane: "lane",
   builtin: "built-in lane default",
+  policy: "clamped by strict policy",
   global: "inherits global effort",
   unset: "provider default",
 };
@@ -409,4 +435,18 @@ export function formatLaneRoute(route: LaneRoute): string {
   const model = route.modelId ?? "—";
   const effort = route.effort ?? "default";
   return `${route.lane} → ${model} (${describeModelSource(route)}) · effort ${effort} (${describeEffortSource(route)})`;
+}
+
+/**
+ * Next explicit effort for a lane when cycling in a UI:
+ * inherit (undefined) → off → low → medium → high → xhigh → max → inherit.
+ */
+export function cycleLaneEffort(
+  current: LaneEffort | undefined,
+  dir: 1 | -1 = 1,
+): LaneEffort | undefined {
+  const order: (LaneEffort | undefined)[] = [undefined, ...LANE_EFFORT_VALUES];
+  const i = order.indexOf(current);
+  const next = (Math.max(0, i) + dir + order.length) % order.length;
+  return order[next];
 }

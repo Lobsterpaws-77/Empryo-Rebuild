@@ -150,3 +150,97 @@ shell node, whose executor is not in this source.
 
 Implementation note: the first commit was produced by a bounded Sonnet worker
 in an isolated worktree. I reviewed and integrated it; the follow-up is mine.
+
+## CP3 — routing controls, per-lane effort UX, strict routing
+
+**Classification:** SHARED CORE (resolver, strict policy, dispatch/TUI/headless
+enforcement) plus SOULFORGE/TUI ONLY (`/router` rendering).
+
+### Routing audit: lanes in the supplied source
+
+| Handoff lane | Core lane | Model control | Effort control | Status |
+|---|---|---|---|---|
+| Prime / Orchestrate | `forge` (new; the main conversation) | active model | global `performance.effort` | strict-checkable. Fallback chain filtered by strict |
+| Explorer | `spark` | yes | **new** `effort.spark` (built-in `low` fallback kept) | done |
+| Coder / Ember | `ember` | yes | **new** `effort.ember` | done |
+| Reviewer / Judge | `verify` | yes | **new** `effort.verify` (was an accidental `low`) | done |
+| Repair / cleanup | `desloppify` | yes | **new** `effort.desloppify` (was global) | done |
+| Web research | `webSearch` | yes | **new** `effort.webSearch` (default: none sent, as before) | done |
+| Compaction | `compact` | yes | **new** `effort.compact` | done |
+| Soul Map summaries | `semantic` | yes | n/a (no reasoning options are sent) | unchanged |
+| Graph Node, Graph Judge, Build, Test, Goal Review, Advisor, Council, Routine, Marionette | none | none | none | **BLOCKED BY MISSING EMPRYO DESKTOP SOURCE**. They can plug in with `registerRoutingLane()` |
+
+### Config reference (`~/.soulforge/config.json` or `<project>/.soulforge/config.json`)
+
+```jsonc
+"taskRouter": {
+  "ember": "openai/gpt-5-mini",
+  "verify": "anthropic/claude-opus-4-6",
+  "effort": { "ember": "medium", "verify": "high", "spark": "low" },
+  "strict": {
+    "enabled": true,
+    "lanes": {
+      "ember":  { "models": ["openai/gpt-5-mini"] },
+      "verify": { "models": ["anthropic/claude-opus-4-6"],
+                  "fallbackModels": ["anthropic/claude-sonnet-4-6"],
+                  "efforts": ["high", "xhigh", "max"], "effortViolation": "reject" },
+      "forge":  { "models": ["anthropic/claude-opus-4-6"] }
+    }
+  }
+}
+```
+
+- `effort` values: `off | low | medium | high | xhigh | max`. A missing or
+  `null` value means the lane's documented fallback applies (see CP1 table).
+- `taskRouter` follows the existing project → global scope rule: a project
+  `taskRouter` replaces the global one wholesale. Models, efforts and the
+  strict policy therefore always come from one scope together.
+
+### Strict routing behaviour (opt-in; off by default)
+
+| Situation | Result |
+|---|---|
+| Permitted model | Dispatch proceeds |
+| Model not permitted, or a constrained lane with no model | `StrictRoutingError`. The worker reports `agent-error` with the reason. No substitute is used, and the error is not retried |
+| Model listed in `fallbackModels` | Proceeds; a note is shown |
+| Effort outside `efforts` | Rejected by default. With `effortViolation: "clamp"`, the nearest permitted effort is used (ties clamp down; source `policy`) and a note is shown |
+| `efforts` set but the provider can't take per-request effort (compat or Codex) | Rejected ("not enforceable") |
+| `forge` lane violated | TUI turn is refused with a visible error; headless refuses to start (exit 1) |
+| Other lane violated | Listed in a "Strict routing:" system message at launch (TUI) or on stderr (headless); refused at dispatch |
+| Forge transient-error fallback chain | Models the `forge` policy doesn't permit are removed from the chain, and the removal is logged |
+| Web-search lane violated | The web-search agent is disabled (the plain scraper still works) and the violation is reported |
+| Compaction lane violated | Compaction fails with a visible message |
+| Strict off, or lane not listed | Existing flexible behaviour, unchanged |
+
+### `/router` (TUI)
+
+- Each lane row shows its **model and effort**. Explicit values are shown in
+  the accent colour. Inherited or fallback values are dim and prefixed `↳`
+  (for example `↳ claude-opus-4-6`, `↳high`, `↳low` for the built-in explore
+  default, `↳auto` for provider default).
+- `e` / `Shift+e` cycles the selected lane's effort: inherit → off → low → …
+  → max → inherit. It writes to the current scope.
+- The line under the table explains the selected lane's sources. The blurb
+  shows `strict` when strict routing is on, and constrained lanes are
+  marked `· strict`.
+
+### Web-search effort gap closed
+
+The web-search agent is built per tool call and receives no provider options.
+When `effort.webSearch` is set, the lane options are injected with a model
+middleware (the same pattern as `resolveModel`). With no lane effort, the
+model is not wrapped at all, so behaviour is identical to before.
+
+### Validation
+
+- `tests/strict-routing.test.ts` (19): strict matrix, clamping, launch
+  validation, fallback filtering, dispatch refusal, strict resolve failure,
+  web-search injection and disable, effort cycling.
+- `tests/router-settings-effort.test.tsx` (2): headless render of `/router`
+  (explicit vs inherited display, `e` key).
+- Found and fixed during testing: a clamped effort was not being applied,
+  because it kept the `global` source. It now uses the `policy` source.
+- Full suite 3142 pass / 14 fail (baseline only). typecheck and lint pass.
+
+**LOCAL ACCEPTANCE REQUIRED:** a live strict failure and fallback with real
+provider accounts.

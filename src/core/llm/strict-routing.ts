@@ -151,7 +151,7 @@ export function enforceStrictRoute(
     notes.push(`lane "${lane}" effort ${effective} clamped to ${clamped} by strict policy`);
     return {
       ok: true,
-      route: { ...route, effort: clamped, effortSource: route.effortSource },
+      route: { ...route, effort: clamped, effortSource: "policy" },
       notes,
     };
   }

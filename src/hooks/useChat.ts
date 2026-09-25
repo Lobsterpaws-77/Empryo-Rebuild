@@ -45,7 +45,12 @@ import {
   isProviderOptionsError,
   supportsTemperature,
 } from "../core/llm/provider-options.js";
-import { buildSubagentRouting } from "../core/llm/subagent-routing.js";
+import {
+  enforceStrictRoute,
+  filterStrictFallbacks,
+  StrictRoutingError,
+} from "../core/llm/strict-routing.js";
+import { buildSubagentRouting, withLaneProviderOptions } from "../core/llm/subagent-routing.js";
 import { onCompaction, writeDiary } from "../core/mcp/mempalace.js";
 import { bounceProxy, proxyHealthProbe } from "../core/proxy/lifecycle.js";
 import { resolveRetrySettings } from "../core/retry/settings.js";
@@ -833,6 +838,8 @@ export function useChat({
   // auto-retry "Continue." inherits the count from the previous attempt.
   const stallRetryCountRef = useRef<number>(0);
   const stallRetryPendingRef = useRef(false);
+  // Strict-routing reports already shown this session (avoid repeating per turn).
+  const strictReportedRef = useRef<Set<string>>(new Set());
   // Per-turn token deltas captured from finish-step events. Reset at the start
   // of each handleSubmit run so the value emitted to the Hearth bridge in
   // turn-done reflects only this turn (not cumulative session totals).
@@ -902,9 +909,12 @@ export function useChat({
 
       try {
         // Model and effort for compaction come from the compact lane together.
-        const compactRoute = resolveLaneRoute("compact", effectiveConfig, {
-          parentModelId: activeModelRef.current,
-        });
+        const compactStrict = enforceStrictRoute(
+          resolveLaneRoute("compact", effectiveConfig, { parentModelId: activeModelRef.current }),
+          effectiveConfig.taskRouter,
+        );
+        if (!compactStrict.ok) throw new StrictRoutingError(compactStrict.violation);
+        const compactRoute = compactStrict.route;
         const compactModelId = compactRoute.modelId ?? activeModelRef.current;
         const model = resolveModel(compactModelId);
         const modelLabel = getShortModelLabel(compactModelId);
@@ -2097,10 +2107,22 @@ export function useChat({
       let streamRetryCount = 0; // local retry counter (not a ref)
       // Model fallback: per-model fallback chains
       const rawFallback = effectiveConfig.modelFallback;
-      const fallbackModels: string[] =
+      const rawChain: string[] =
         rawFallback && typeof rawFallback === "object" && !Array.isArray(rawFallback)
           ? (rawFallback[activeModelRef.current] ?? []).filter((m) => m && m.trim().length > 0)
           : [];
+      // Strict routing: never silently fall back to a model the Forge lane forbids.
+      const { allowed: fallbackModels, blocked: blockedFallbacks } = filterStrictFallbacks(
+        "forge",
+        rawChain,
+        effectiveConfig.taskRouter,
+      );
+      if (blockedFallbacks.length > 0) {
+        logBackgroundError(
+          "routing",
+          `strict routing removed fallback model(s) not permitted for the Forge: ${blockedFallbacks.join(", ")}`,
+        );
+      }
       let fallbackIndex = -1; // -1 = primary, 0+ = index into fallbackModels
       const primaryModelId = activeModelRef.current;
       let cycleCount = 0;
@@ -2144,7 +2166,9 @@ export function useChat({
             subagentModels,
             webSearchModel,
             webSearchModelId,
+            webSearchRoute,
             routes: laneRoutes,
+            strict: strictCheck,
           } = buildSubagentRouting(effectiveConfig, modelId, resolveModel, (lane, id, err) => {
             if (lane !== "webSearch") throw err;
             logBackgroundError(
@@ -2153,6 +2177,27 @@ export function useChat({
             );
           });
           logBackgroundError("router:lanes", laneRoutes.map(formatLaneRoute).join("\n"));
+          // Strict routing (opt-in): the Forge itself must satisfy its lane
+          // policy or the turn is refused; other constrained lanes are
+          // reported now and refused at dispatch time.
+          const forgeViolation = strictCheck.violations.find((v) => v.lane === "forge");
+          if (forgeViolation) throw new StrictRoutingError(forgeViolation);
+          const strictLines = [
+            ...strictCheck.violations.map((v) => `✗ ${v.message}`),
+            ...strictCheck.notes.map((n) => `↳ ${n}`),
+          ];
+          if (strictLines.length > 0 && !strictReportedRef.current.has(strictLines.join("\n"))) {
+            strictReportedRef.current.add(strictLines.join("\n"));
+            setMessages((prev) => [
+              ...prev,
+              {
+                id: crypto.randomUUID(),
+                role: "system",
+                content: `Strict routing:\n${strictLines.join("\n")}`,
+                timestamp: Date.now(),
+              },
+            ]);
+          }
           webSearchModelLabelRef.current = webSearchModel
             ? (() => {
                 const id = webSearchModelId as string;
@@ -2177,7 +2222,9 @@ export function useChat({
             ? interactiveCallbacks.onWebSearchApproval
             : undefined;
           const fetchPageApproval = interactiveCallbacks.onFetchPageApproval;
-          const effectiveWebSearchModel = webSearchEnabled ? webSearchModel : undefined;
+          const effectiveWebSearchModel = webSearchEnabled
+            ? await withLaneProviderOptions(webSearchModel, webSearchRoute, effectiveConfig)
+            : undefined;
 
           // Build providerOptions (thinking, effort, context management)
           const {

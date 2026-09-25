@@ -11,6 +11,7 @@ import { applyLaneEffort, type LaneRoute, resolveLaneRoute } from "../llm/lane-r
 import { getModelId } from "../llm/model-id.js";
 import { getModelContextWindow } from "../llm/models.js";
 import { buildProviderOptions, supportsProgrammaticToolCalling } from "../llm/provider-options.js";
+import { enforceStrictRoute, StrictRoutingError } from "../llm/strict-routing.js";
 import { wrapWithBusCache } from "../tools/bus-cache.js";
 import { getActiveTaskTab } from "../tools/task-list.js";
 import { deriveTool } from "../tools/tool-utils.js";
@@ -260,7 +261,18 @@ export async function createAgent(
   // Resolve the lane's effort from the SAME effective snapshot that picked the
   // model — never from generic role/tier classification or another lane.
   const routingConfig = models.routingConfig ?? loadConfig();
-  const route = resolveTaskRoute(task, models, routingConfig);
+  // Strict routing (opt-in): a disallowed model/effort fails visibly here —
+  // no worker is launched and nothing is substituted.
+  const strict = enforceStrictRoute(
+    resolveTaskRoute(task, models, routingConfig),
+    routingConfig.taskRouter,
+  );
+  if (!strict.ok) {
+    logBackgroundError("routing", strict.violation.message);
+    throw new StrictRoutingError(strict.violation);
+  }
+  for (const note of strict.notes) logBackgroundError("routing", note);
+  const route = strict.route;
 
   // Rebuild provider options from scratch for the subagent's model — same path
   // the main forge uses (buildProviderOptions). This guarantees per-model
