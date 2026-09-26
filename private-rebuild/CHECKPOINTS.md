@@ -512,3 +512,17 @@ never becomes "install to production"). No core machinery was needed.
 - A regression found and fixed: the headless parser now omits `diagnostics`
   unless set, so the exact option shape stays unchanged.
 - Full suite 3231 pass / 14 fail (baseline only). typecheck and lint pass.
+
+## CP8 — whole-project validation and release candidate
+
+- Final source state is `4501490`. This checkpoint adds documentation only.
+- typecheck pass; lint pass (478 files); `bun test` 3231 pass / 1 skip /
+  14 fail (baseline `structural_edit` only).
+- `bun run build` passes with a neutral `HOME`. See the note in `README.md`:
+  a pre-existing path scrubber collides with `HOME=/root`. The built
+  `dist/index.js` reports `soulforge 2.20.25 (4501490)`, and `--preflight`
+  runs.
+- Frozen-area check: there is no diff under provider, auth, credential or
+  proxy code.
+- Deliverables are `README.md` (final report), `LOCAL_ACCEPTANCE.md`, this
+  log, `CP0_BASELINE_AUDIT.md`, and `recipes/`.
