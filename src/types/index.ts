@@ -237,7 +237,8 @@ interface ThinkingConfig {
 
 export type EffortLevel = "low" | "medium" | "high" | "xhigh" | "max";
 
-type OpenAIReasoningEffort = "none" | "minimal" | "low" | "medium" | "high" | "xhigh";
+/** "max" is Codex-only; the OpenAI API receives it as "xhigh". */
+type OpenAIReasoningEffort = "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 type ServiceTier = "auto" | "flex" | "priority" | "default";
 
 export type GoogleThinkingLevel = "off" | "minimal" | "low" | "medium" | "high";

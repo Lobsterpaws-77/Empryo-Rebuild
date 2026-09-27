@@ -514,6 +514,10 @@ export function getSupportedEfforts(modelId: string): string[] | null {
   const family = detectModelFamily(modelId);
   const base = extractBaseModel(modelId);
 
+  // Codex clamps to each model's advertised levels at call time.
+  if (parseModelId(modelId).provider === "codex") {
+    return ["off", "none", "minimal", "low", "medium", "high", "xhigh", "max"];
+  }
   if (family === "claude") {
     const efforts = getSupportedClaudeEfforts(modelId);
     return efforts ? ["off", ...efforts] : null;
@@ -780,7 +784,8 @@ function buildOpenAIOptions(
   if (caps.openaiReasoning) {
     const effort = config.performance?.openaiReasoningEffort;
     if (effort && effort !== "off") {
-      opts.reasoningEffort = effort;
+      // The OpenAI API tops out at xhigh; "max" exists for Codex.
+      opts.reasoningEffort = effort === "max" ? "xhigh" : effort;
     }
     const summary = config.performance?.openaiReasoningSummary;
     if (summary && summary !== "off") {
@@ -884,12 +889,9 @@ export async function buildProviderOptions(
 
   // Codex runs the official CLI; its runner clamps this to the model's
   // supported levels and passes it as `model_reasoning_effort`.
-  // Codex models are GPT models, so the OpenAI tab's Effort wins; the unified
-  // Effort is the fallback (same precedence as the other provider knobs).
+  // Codex models are GPT models: their effort is the OpenAI tab's Effort.
   if (provider === "codex") {
-    const openaiEffort = config.performance?.openaiReasoningEffort;
-    const effort =
-      openaiEffort && openaiEffort !== "off" ? openaiEffort : config.performance?.effort;
+    const effort = config.performance?.openaiReasoningEffort;
     if (effort && effort !== "off") {
       providerOptions.codex = { reasoningEffort: effort };
     }

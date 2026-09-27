@@ -535,56 +535,78 @@ describe("telemetryModelInfo (privacy-safe provider/model)", () => {
 });
 
 describe("Codex reasoning effort", () => {
-  test("main-chat effort is forwarded to Codex models as-is", async () => {
-    for (const effort of ["low", "medium", "high", "xhigh", "max"] as const) {
+  test("OpenAI tab Effort is forwarded to Codex as-is, including xhigh and max", async () => {
+    for (const effort of ["none", "minimal", "low", "medium", "high", "xhigh", "max"] as const) {
       const { providerOptions } = await buildProviderOptions(
         "codex/gpt-6-luna",
-        baseConfig({ effort }),
+        baseConfig({ openaiReasoningEffort: effort }),
       );
       expect(providerOptions.codex).toEqual({ reasoningEffort: effort });
       expect(providerOptions.openai).toBeUndefined();
     }
   });
 
-  test("the OpenAI tab's Effort wins over the unified Effort for Codex", async () => {
+  test("the Claude tab's unified Effort does not drive Codex", async () => {
+    const claudeOnly = await buildProviderOptions(
+      "codex/gpt-6-luna",
+      baseConfig({ effort: "high" }),
+    );
+    expect(claudeOnly.providerOptions.codex).toBeUndefined();
     const both = await buildProviderOptions(
       "codex/gpt-6-luna",
-      baseConfig({ openaiReasoningEffort: "high", effort: "low" }),
+      baseConfig({ openaiReasoningEffort: "low", effort: "max" }),
     );
-    expect(both.providerOptions.codex).toEqual({ reasoningEffort: "high" });
-    const openaiOnly = await buildProviderOptions(
-      "codex/gpt-6-luna",
-      baseConfig({ openaiReasoningEffort: "minimal" }),
-    );
-    expect(openaiOnly.providerOptions.codex).toEqual({ reasoningEffort: "minimal" });
-    const openaiOff = await buildProviderOptions(
-      "codex/gpt-6-luna",
-      baseConfig({ openaiReasoningEffort: "off", effort: "medium" }),
-    );
-    expect(openaiOff.providerOptions.codex).toEqual({ reasoningEffort: "medium" });
+    expect(both.providerOptions.codex).toEqual({ reasoningEffort: "low" });
   });
 
   test("off or unset sends nothing", async () => {
-    const off = await buildProviderOptions("codex/gpt-6-luna", baseConfig({ effort: "off" }));
+    const off = await buildProviderOptions(
+      "codex/gpt-6-luna",
+      baseConfig({ openaiReasoningEffort: "off" }),
+    );
     expect(off.providerOptions.codex).toBeUndefined();
     const unset = await buildProviderOptions("codex/gpt-6-luna", baseConfig());
     expect(unset.providerOptions.codex).toBeUndefined();
   });
 
-  test("non-Codex providers never get a codex block", async () => {
+  test("direct OpenAI never receives max (sent as xhigh) and gets no codex block", async () => {
     const { providerOptions } = await buildProviderOptions(
       "openai/gpt-5",
-      baseConfig({ effort: "high" }),
+      baseConfig({ openaiReasoningEffort: "max" }),
     );
+    expect((providerOptions.openai as Record<string, unknown>).reasoningEffort).toBe("xhigh");
     expect(providerOptions.codex).toBeUndefined();
   });
 
-  test("a worker lane's own effort replaces the main-chat effort for that worker", async () => {
-    const cfg = baseConfig({ effort: "high" });
-    (cfg as { taskRouter?: unknown }).taskRouter = { ember: "codex/gpt-6-sol", effort: { ember: "low" } };
-    const route = resolveLaneRoute("ember", cfg, { parentModelId: "codex/gpt-6-luna" });
-    const worker = await buildProviderOptions("codex/gpt-6-sol", applyLaneEffort(cfg, route));
-    expect(worker.providerOptions.codex).toEqual({ reasoningEffort: "low" });
+  test("Codex models offer the full effort range in settings", () => {
+    expect(getSupportedEfforts("codex/gpt-6-luna")).toEqual([
+      "off",
+      "none",
+      "minimal",
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max",
+    ]);
+  });
+
+  test("worker lanes: explicit effort is kept; fallbacks use the global OpenAI Effort", async () => {
+    const cfg = baseConfig({ openaiReasoningEffort: "high" });
+    (cfg as { taskRouter?: unknown }).taskRouter = {
+      spark: "codex/gpt-6-sol",
+      ember: "codex/gpt-6-sol",
+      verify: "codex/gpt-6-sol",
+      effort: { ember: "low", verify: "max" },
+    };
+    const worker = async (lane: string) => {
+      const route = resolveLaneRoute(lane, cfg, { parentModelId: "codex/gpt-6-luna" });
+      return (await buildProviderOptions("codex/gpt-6-sol", applyLaneEffort(cfg, route)))
+        .providerOptions.codex;
+    };
+    expect(await worker("ember")).toEqual({ reasoningEffort: "low" });
+    expect(await worker("verify")).toEqual({ reasoningEffort: "max" });
+    expect(await worker("spark")).toEqual({ reasoningEffort: "high" });
     const main = await buildProviderOptions("codex/gpt-6-luna", cfg);
     expect(main.providerOptions.codex).toEqual({ reasoningEffort: "high" });
   });

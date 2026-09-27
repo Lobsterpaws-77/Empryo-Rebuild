@@ -152,9 +152,9 @@ const OPENAI_ITEMS: SettingItem[] = [
   {
     key: "openaiReasoningEffort",
     label: "Effort",
-    desc: "o3 · o4 · gpt-5.x — reasoning depth. none = fastest (latency-sensitive)",
+    desc: "o3 · o4 · gpt-5.x · Codex — reasoning depth. none = fastest (latency-sensitive)",
     type: "cycle",
-    options: ["off", "none", "minimal", "low", "medium", "high"],
+    options: ["off", "none", "minimal", "low", "medium", "high", "xhigh", "max"],
   },
   {
     key: "openaiReasoningSummary",
@@ -620,7 +620,7 @@ function detectInitialScope(project: Partial<AppConfig> | null): ConfigScope {
 const EFFORT_KEY_MODELS: Record<string, (model: string) => string> = {
   effort: (m) => m,
   deepseekReasoningEffort: () => "deepseek/deepseek-v4-pro",
-  openaiReasoningEffort: () => "openai/gpt-5",
+  openaiReasoningEffort: (m) => (m.startsWith("codex/") ? m : "openai/gpt-5"),
   xaiReasoningEffort: () => "xai/grok-4",
   googleThinkingLevel: () => "google/gemini-3-pro",
   llmgatewayReasoningEffort: (m) => `llmgateway/${m.split("/").pop() ?? m}`,
@@ -628,7 +628,7 @@ const EFFORT_KEY_MODELS: Record<string, (model: string) => string> = {
 
 /** Narrow a cycle's options to the active model when the key is effort-style
  *  and the model has a known capability set. Falls back to the static list. */
-function resolveOptions(key: string, staticOpts: string[], activeModel: string): string[] {
+export function resolveOptions(key: string, staticOpts: string[], activeModel: string): string[] {
   const resolver = EFFORT_KEY_MODELS[key];
   if (!resolver) return staticOpts;
   const supported = getSupportedEfforts(resolver(activeModel));

@@ -388,12 +388,12 @@ export function resolveRoutingTable(config: RoutingConfig, parentModelId: string
 
 // ── Applying a route to provider options ─────────────────────────────────
 
-const OPENAI_EFFORT: Record<EffortLevel, "low" | "medium" | "high" | "xhigh"> = {
+const OPENAI_EFFORT: Record<EffortLevel, "low" | "medium" | "high" | "xhigh" | "max"> = {
   low: "low",
   medium: "medium",
   high: "high",
   xhigh: "xhigh",
-  max: "xhigh",
+  max: "max",
 };
 
 /**

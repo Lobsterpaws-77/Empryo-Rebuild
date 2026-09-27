@@ -252,7 +252,8 @@ describe("applyLaneEffort", () => {
     const r = resolveLaneRoute("verify", c, { parentModelId: PARENT });
     const perf = applyLaneEffort(c, r).performance;
     expect(perf?.effort).toBe("max");
-    expect(perf?.openaiReasoningEffort).toBe("xhigh");
+    // "max" survives for Codex; the direct OpenAI request maps it to xhigh.
+    expect(perf?.openaiReasoningEffort).toBe("max");
     expect(perf?.xaiReasoningEffort).toBeUndefined();
   });
 });
