@@ -16,12 +16,69 @@ import type {
 } from "@ai-sdk/provider";
 import { getCwd } from "../../../cwd.js";
 import { trackProcess } from "../../../process-tracker.js";
+import { getCodexReasoningLevels } from "./client.js";
 
 export interface CodexRunnerCall {
   modelId: string;
   prompt: string;
   schema: JSONSchema7;
   abortSignal?: AbortSignal;
+  /** Codex `model_reasoning_effort`; unset leaves Codex's own default. */
+  reasoningEffort?: string;
+}
+
+/** App effort levels, lowest first. Codex uses the same names for these. */
+const EFFORT_LADDER = ["low", "medium", "high", "xhigh", "max"] as const;
+/** Highest level sent when the model's supported levels can't be read from Codex. */
+const UNKNOWN_MODEL_CAP = "high";
+
+/** App effort requested via `providerOptions.codex.reasoningEffort`, if valid. */
+export function getRequestedCodexEffort(options: LanguageModelV2CallOptions): string | undefined {
+  const v = options.providerOptions?.codex?.reasoningEffort;
+  return typeof v === "string" && (EFFORT_LADDER as readonly string[]).includes(v) ? v : undefined;
+}
+
+/**
+ * The Codex value to send for `requested`: the highest level at or below it
+ * that the model supports. `supported` undefined = unknown → capped at high.
+ * Returns undefined when nothing at or below is supported (Codex default).
+ */
+export function resolveCodexReasoningEffort(
+  requested: string,
+  supported: readonly string[] | undefined,
+): string | undefined {
+  const idx = (EFFORT_LADDER as readonly string[]).indexOf(requested);
+  if (idx < 0) return undefined;
+  const top = supported ? idx : Math.min(idx, EFFORT_LADDER.indexOf(UNKNOWN_MODEL_CAP));
+  for (let i = top; i >= 0; i--) {
+    const level = EFFORT_LADDER[i] as string;
+    if (!supported || supported.includes(level)) return level;
+  }
+  return undefined;
+}
+
+export function buildCodexExecArgs(
+  call: CodexRunnerCall,
+  schemaPath: string,
+  cwd: string,
+): string[] {
+  const args = [
+    "exec",
+    "--json",
+    "--ephemeral",
+    "--skip-git-repo-check",
+    "--sandbox",
+    "read-only",
+    "--color",
+    "never",
+    "--config",
+    'approval_policy="never"',
+  ];
+  if (call.reasoningEffort && (EFFORT_LADDER as readonly string[]).includes(call.reasoningEffort)) {
+    args.push("--config", `model_reasoning_effort="${call.reasoningEffort}"`);
+  }
+  args.push("--cd", cwd, "--output-schema", schemaPath, "--model", call.modelId);
+  return args;
 }
 
 export interface CodexRunnerResult {
@@ -295,24 +352,7 @@ class CodexCliRunner implements CodexRunner {
     const schemaPath = join(dir, "schema.json");
     await writeFile(schemaPath, JSON.stringify(call.schema, null, 2), "utf8");
 
-    const args = [
-      "exec",
-      "--json",
-      "--ephemeral",
-      "--skip-git-repo-check",
-      "--sandbox",
-      "read-only",
-      "--color",
-      "never",
-      "--config",
-      'approval_policy="never"',
-      "--cd",
-      getCwd(),
-      "--output-schema",
-      schemaPath,
-      "--model",
-      call.modelId,
-    ];
+    const args = buildCodexExecArgs(call, schemaPath, getCwd());
 
     try {
       return await runCodexProcess(args, call.prompt, call.abortSignal);
@@ -429,6 +469,7 @@ async function runCodexProcess(
 export function createCodexLanguageModel(
   modelId: string,
   runner: CodexRunner = new CodexCliRunner(),
+  getReasoningLevels: () => Promise<Map<string, string[]> | null> = getCodexReasoningLevels,
 ): LanguageModelV2 {
   const warningsFor = (options: LanguageModelV2CallOptions) => collectWarnings(options);
 
@@ -439,11 +480,16 @@ export function createCodexLanguageModel(
     supportedUrls: {},
     async doGenerate(options) {
       const warnings = warningsFor(options);
+      const requested = getRequestedCodexEffort(options);
+      const reasoningEffort = requested
+        ? resolveCodexReasoningEffort(requested, (await getReasoningLevels())?.get(modelId))
+        : undefined;
       const result = await runner.run({
         modelId,
         prompt: serializeCodexPrompt(options),
         schema: buildCodexSchema(options),
         abortSignal: options.abortSignal,
+        reasoningEffort,
       });
 
       const parsed = parseCodexResponse(result.text);

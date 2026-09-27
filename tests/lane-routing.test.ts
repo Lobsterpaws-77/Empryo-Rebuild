@@ -264,7 +264,7 @@ describe("laneEffortDelivery", () => {
     expect(laneEffortDelivery("proxy/claude-sonnet-4-6")).toBe("request");
     expect(laneEffortDelivery("proxy/gemini-3-pro")).toBe("construction");
     expect(laneEffortDelivery("groq/qwen3-32b")).toBe("construction");
-    expect(laneEffortDelivery("codex/gpt-5-codex")).toBe("unsupported");
+    expect(laneEffortDelivery("codex/gpt-5-codex")).toBe("request");
   });
 });
 

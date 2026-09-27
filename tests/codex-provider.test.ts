@@ -2,6 +2,12 @@ import type { LanguageModelV2CallOptions } from "@ai-sdk/provider";
 import { describe, expect, test } from "bun:test";
 import { getAllProviders, getProvider } from "../src/core/llm/providers/index.js";
 import { performCodexBrowserLogin } from "../src/core/llm/providers/codex/auth.js";
+import { parseCodexReasoningLevels } from "../src/core/llm/providers/codex/client.js";
+import {
+  buildCodexExecArgs,
+  getRequestedCodexEffort,
+  resolveCodexReasoningEffort,
+} from "../src/core/llm/providers/codex/runner.js";
 import {
   buildCodexSchema,
   codex,
@@ -281,5 +287,92 @@ describe("codex provider", () => {
     }
 
     expect(parts).toEqual(["stream-start", "text-start", "text-delta", "text-end", "finish"]);
+  });
+});
+
+describe("codex reasoning effort", () => {
+  const STOP_REPLY = {
+    text: JSON.stringify({ finishReason: "stop", reasoning: "", text: "ok", toolCalls: [] }),
+    usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+  };
+  const withEffort = (effort: string): LanguageModelV2CallOptions => ({
+    ...BASE_OPTIONS,
+    providerOptions: { codex: { reasoningEffort: effort } },
+  });
+
+  test("clamps to the highest supported level at or below the request", () => {
+    const supported = ["low", "medium", "high", "xhigh"];
+    expect(resolveCodexReasoningEffort("low", supported)).toBe("low");
+    expect(resolveCodexReasoningEffort("high", supported)).toBe("high");
+    expect(resolveCodexReasoningEffort("xhigh", supported)).toBe("xhigh");
+    expect(resolveCodexReasoningEffort("max", supported)).toBe("xhigh");
+    expect(resolveCodexReasoningEffort("max", [...supported, "max"])).toBe("max");
+    expect(resolveCodexReasoningEffort("xhigh", ["low", "medium", "high"])).toBe("high");
+    expect(resolveCodexReasoningEffort("low", ["medium", "high"])).toBeUndefined();
+  });
+
+  test("caps at high when the model's levels are unknown", () => {
+    expect(resolveCodexReasoningEffort("low", undefined)).toBe("low");
+    expect(resolveCodexReasoningEffort("high", undefined)).toBe("high");
+    expect(resolveCodexReasoningEffort("xhigh", undefined)).toBe("high");
+    expect(resolveCodexReasoningEffort("max", undefined)).toBe("high");
+  });
+
+  test("ignores values that are not app effort levels", () => {
+    expect(getRequestedCodexEffort(withEffort("off"))).toBeUndefined();
+    expect(getRequestedCodexEffort(withEffort('high" x="1'))).toBeUndefined();
+    expect(getRequestedCodexEffort(BASE_OPTIONS)).toBeUndefined();
+    expect(getRequestedCodexEffort(withEffort("medium"))).toBe("medium");
+  });
+
+  test("parses supported levels from model/list by id and model slug", () => {
+    const levels = parseCodexReasoningLevels({
+      data: [
+        {
+          id: "gpt-6-luna",
+          model: "gpt-6-luna-2026",
+          supportedReasoningEfforts: [
+            { reasoningEffort: "low", description: "" },
+            { reasoningEffort: "high", description: "" },
+          ],
+        },
+        { id: "legacy", model: "legacy" },
+      ],
+    });
+    expect(levels.get("gpt-6-luna")).toEqual(["low", "high"]);
+    expect(levels.get("gpt-6-luna-2026")).toEqual(["low", "high"]);
+    expect(levels.has("legacy")).toBe(false);
+    expect(parseCodexReasoningLevels(null).size).toBe(0);
+  });
+
+  test("language model sends the clamped effort to the runner", async () => {
+    const sent: Array<string | undefined> = [];
+    const levels = new Map([["gpt-6-luna", ["low", "medium", "high", "xhigh"]]]);
+    const model = createCodexLanguageModel(
+      "gpt-6-luna",
+      {
+        async run(call) {
+          sent.push(call.reasoningEffort);
+          return STOP_REPLY;
+        },
+      },
+      async () => levels,
+    );
+    await model.doGenerate(withEffort("high"));
+    await model.doGenerate(withEffort("max"));
+    await model.doGenerate(BASE_OPTIONS);
+    expect(sent).toEqual(["high", "xhigh", undefined]);
+  });
+
+  test("codex exec gets model_reasoning_effort only when an effort is set", () => {
+    const base = { modelId: "gpt-6-luna", prompt: "", schema: {} };
+    const args = buildCodexExecArgs({ ...base, reasoningEffort: "xhigh" }, "/s.json", "/w");
+    const i = args.indexOf('model_reasoning_effort="xhigh"');
+    expect(i).toBeGreaterThan(0);
+    expect(args[i - 1]).toBe("--config");
+    expect(args.slice(-2)).toEqual(["--model", "gpt-6-luna"]);
+
+    const none = buildCodexExecArgs(base, "/s.json", "/w");
+    expect(none.some((a) => a.includes("model_reasoning_effort"))).toBe(false);
   });
 });

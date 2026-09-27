@@ -316,7 +316,42 @@ async function requestCodexAppServer(
   }
 }
 
+/** Reasoning efforts each model advertises in `model/list`, keyed by id and model slug. */
+export function parseCodexReasoningLevels(result: unknown): Map<string, string[]> {
+  const levels = new Map<string, string[]>();
+  const data =
+    result && typeof result === "object" && "data" in result
+      ? (result as { data?: unknown }).data
+      : undefined;
+  if (!Array.isArray(data)) return levels;
+  for (const entry of data) {
+    if (!entry || typeof entry !== "object") continue;
+    const item = entry as { id?: unknown; model?: unknown; supportedReasoningEfforts?: unknown };
+    if (!Array.isArray(item.supportedReasoningEfforts)) continue;
+    const efforts = item.supportedReasoningEfforts.flatMap((o) => {
+      const v =
+        o && typeof o === "object" ? (o as { reasoningEffort?: unknown }).reasoningEffort : o;
+      return typeof v === "string" && v ? [v] : [];
+    });
+    for (const key of [item.id, item.model]) {
+      if (typeof key === "string" && key) levels.set(key, efforts);
+    }
+  }
+  return levels;
+}
+
+let reasoningLevels: Promise<Map<string, string[]> | null> | null = null;
+
+/** Per-model reasoning efforts from Codex, fetched once per process. null = unavailable. */
+export function getCodexReasoningLevels(): Promise<Map<string, string[]> | null> {
+  reasoningLevels ??= requestCodexAppServer("model/list", {})
+    .then(parseCodexReasoningLevels)
+    .catch(() => null);
+  return reasoningLevels;
+}
+
 export async function fetchCodexModelsFromAppServer(): Promise<ProviderModelInfo[]> {
   const result = await requestCodexAppServer("model/list", {});
+  reasoningLevels ??= Promise.resolve(parseCodexReasoningLevels(result));
   return parseCodexModelListResult(result);
 }

@@ -436,7 +436,7 @@ export function laneEffortDelivery(modelId: string): EffortDelivery {
   const slash = modelId.indexOf("/");
   const provider = slash > 0 ? modelId.slice(0, slash) : "";
   const model = slash > 0 ? modelId.slice(slash + 1) : modelId;
-  if (provider === "codex") return "unsupported";
+  if (provider === "codex") return "request";
   // Claude over the proxy is built with native Anthropic options (per request).
   if (provider === "proxy" && model.toLowerCase().startsWith("claude")) return "request";
   if (isCompatReasoningProvider(modelId)) return "construction";

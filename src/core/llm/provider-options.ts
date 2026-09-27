@@ -881,6 +881,16 @@ export async function buildProviderOptions(
   // by the custom provider's fetch wrapper, but we also surface the params
   // here for logging, degradation, and future extensibility.
   const { provider } = parseModelId(modelId);
+
+  // Codex runs the official CLI; its runner clamps this to the model's
+  // supported levels and passes it as `model_reasoning_effort`.
+  if (provider === "codex") {
+    const effort = config.performance?.effort;
+    if (effort && effort !== "off") {
+      providerOptions.codex = { reasoningEffort: effort };
+    }
+  }
+
   const customProvider = provider ? getProvider(provider) : null;
   if (customProvider?.custom && customProvider.customReasoning) {
     const r = customProvider.customReasoning;
