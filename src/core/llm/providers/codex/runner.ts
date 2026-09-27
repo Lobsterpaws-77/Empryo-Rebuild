@@ -27,8 +27,8 @@ export interface CodexRunnerCall {
   reasoningEffort?: string;
 }
 
-/** App effort levels, lowest first. Codex uses the same names for these. */
-const EFFORT_LADDER = ["low", "medium", "high", "xhigh", "max"] as const;
+/** App effort levels (unified + OpenAI tab), lowest first. Codex uses the same names. */
+const EFFORT_LADDER = ["none", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 /** Highest level sent when the model's supported levels can't be read from Codex. */
 const UNKNOWN_MODEL_CAP = "high";
 

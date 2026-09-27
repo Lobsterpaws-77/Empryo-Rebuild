@@ -546,6 +546,24 @@ describe("Codex reasoning effort", () => {
     }
   });
 
+  test("the OpenAI tab's Effort wins over the unified Effort for Codex", async () => {
+    const both = await buildProviderOptions(
+      "codex/gpt-6-luna",
+      baseConfig({ openaiReasoningEffort: "high", effort: "low" }),
+    );
+    expect(both.providerOptions.codex).toEqual({ reasoningEffort: "high" });
+    const openaiOnly = await buildProviderOptions(
+      "codex/gpt-6-luna",
+      baseConfig({ openaiReasoningEffort: "minimal" }),
+    );
+    expect(openaiOnly.providerOptions.codex).toEqual({ reasoningEffort: "minimal" });
+    const openaiOff = await buildProviderOptions(
+      "codex/gpt-6-luna",
+      baseConfig({ openaiReasoningEffort: "off", effort: "medium" }),
+    );
+    expect(openaiOff.providerOptions.codex).toEqual({ reasoningEffort: "medium" });
+  });
+
   test("off or unset sends nothing", async () => {
     const off = await buildProviderOptions("codex/gpt-6-luna", baseConfig({ effort: "off" }));
     expect(off.providerOptions.codex).toBeUndefined();

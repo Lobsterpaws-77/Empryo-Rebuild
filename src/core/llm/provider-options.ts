@@ -884,8 +884,12 @@ export async function buildProviderOptions(
 
   // Codex runs the official CLI; its runner clamps this to the model's
   // supported levels and passes it as `model_reasoning_effort`.
+  // Codex models are GPT models, so the OpenAI tab's Effort wins; the unified
+  // Effort is the fallback (same precedence as the other provider knobs).
   if (provider === "codex") {
-    const effort = config.performance?.effort;
+    const openaiEffort = config.performance?.openaiReasoningEffort;
+    const effort =
+      openaiEffort && openaiEffort !== "off" ? openaiEffort : config.performance?.effort;
     if (effort && effort !== "off") {
       providerOptions.codex = { reasoningEffort: effort };
     }

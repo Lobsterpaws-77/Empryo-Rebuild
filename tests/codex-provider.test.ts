@@ -309,6 +309,9 @@ describe("codex reasoning effort", () => {
     expect(resolveCodexReasoningEffort("max", [...supported, "max"])).toBe("max");
     expect(resolveCodexReasoningEffort("xhigh", ["low", "medium", "high"])).toBe("high");
     expect(resolveCodexReasoningEffort("low", ["medium", "high"])).toBeUndefined();
+    expect(resolveCodexReasoningEffort("minimal", ["none", "minimal", "low"])).toBe("minimal");
+    expect(resolveCodexReasoningEffort("minimal", ["none", "low"])).toBe("none");
+    expect(resolveCodexReasoningEffort("none", ["low", "medium"])).toBeUndefined();
   });
 
   test("caps at high when the model's levels are unknown", () => {
@@ -323,6 +326,7 @@ describe("codex reasoning effort", () => {
     expect(getRequestedCodexEffort(withEffort('high" x="1'))).toBeUndefined();
     expect(getRequestedCodexEffort(BASE_OPTIONS)).toBeUndefined();
     expect(getRequestedCodexEffort(withEffort("medium"))).toBe("medium");
+    expect(getRequestedCodexEffort(withEffort("minimal"))).toBe("minimal");
   });
 
   test("parses supported levels from model/list by id and model slug", () => {
