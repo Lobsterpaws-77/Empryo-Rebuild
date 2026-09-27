@@ -65,6 +65,13 @@ const SECTIONS: SectionDef[] = [
         icon: "model",
         hint: "Conversation & fallback",
       },
+      {
+        kind: "slot",
+        key: "forge",
+        label: "Forge",
+        icon: "dispatch",
+        hint: "Main agent model & effort",
+      },
     ],
   },
   {
@@ -196,6 +203,7 @@ export function RouterSettings({
     if (router) {
       const keys: (keyof TaskRouter)[] = [
         "default",
+        "forge",
         "spark",
         "ember",
         "webSearch",
