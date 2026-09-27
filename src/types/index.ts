@@ -12,8 +12,6 @@ export interface TaskRouter {
   spark: string | null;
   /** Model for 🔥 ember agents — code edits. */
   ember: string | null;
-  /** Model for the main Forge agent (conversation & dispatch coordination). */
-  forge: string | null;
   webSearch: string | null;
   desloppify: string | null;
   verify: string | null;

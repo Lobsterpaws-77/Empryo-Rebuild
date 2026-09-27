@@ -113,7 +113,6 @@ const ABORT_ON_LOADING = new Set([
 const DEFAULT_TASK_ROUTER: TaskRouter = {
   spark: null,
   ember: null,
-  forge: null,
   webSearch: null,
   desloppify: null,
   verify: null,
